@@ -30,7 +30,7 @@
       grid-template-columns:330px 1fr;
       gap:14px;
       padding:14px;
-      transition: grid-template-columns .18s ease;
+      transition:grid-template-columns .18s ease;
     }
     .app.side-collapsed{ grid-template-columns:66px 1fr; }
 
@@ -375,7 +375,14 @@
       </div>
 
       <div class="frame-wrap">
-        <iframe id="viewer" title="Workspace"></iframe>
+        <!-- ✅ iframe con permisos para scripts y clipboard -->
+        <iframe
+          id="viewer"
+          title="Workspace"
+          sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-modals allow-downloads allow-top-navigation-by-user-activation"
+          allow="clipboard-read; clipboard-write"
+          referrerpolicy="no-referrer"
+        ></iframe>
       </div>
 
       <div class="status" id="status">Estado: <b>Listo</b></div>
@@ -383,9 +390,7 @@
   </div>
 
   <script type="module">
-    // =========================
     // Firebase config (tu bloque)
-    // =========================
     const firebaseConfig = {
       apiKey: "AIzaSyDdXF24bG8QL22a8lkHeHd4ToNq5qDdAI4",
       authDomain: "oriflame-ops-hub.firebaseapp.com",
@@ -395,28 +400,22 @@
       appId: "1:1052710112933:web:97ed393eee72063d1f074c"
     };
 
-    // =========================
     // Firebase SDKs (CDN modular)
-    // =========================
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
     import {
-      getFirestore, collection, addDoc, getDocs, query, orderBy, deleteDoc, doc
+      getFirestore, collection, addDoc, getDocs, deleteDoc, doc
     } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
     import {
       getStorage, ref, uploadBytes, getDownloadURL, deleteObject
     } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
 
-    // =========================
-    // Init
-    // =========================
     const fbApp = initializeApp(firebaseConfig);
     const db = getFirestore(fbApp);
     const storage = getStorage(fbApp);
 
-    // =========================
-    // UI + helpers
-    // =========================
-    const LS = { collapsed: "of_hub_collapsed", lastDocId: "of_hub_last_docid" };
+    const toolsCol = collection(db, "tools");
+
+    const LS = { collapsed:"of_hub_collapsed", lastDocId:"of_hub_last_docid" };
 
     const appEl = document.querySelector(".app");
     const sidebar = document.getElementById("sidebar");
@@ -463,25 +462,26 @@
             Sube tus HTML, asígnales categoría y trabaja desde un solo hub.
           </p>
           <div style="padding:14px;border:1px solid rgba(18,49,42,.12);border-radius:14px;background:rgba(191,238,224,.18)">
-            Los archivos quedan en Firebase Storage y el catálogo en Firestore.
+            Se guarda en Firebase Storage y se lista desde Firestore.
           </div>
         </div>
       `;
     }
 
-    // =========================
-    // Firestore model
-    // collection: tools
-    // fields: name, category, storagePath, url, createdAt
-    // =========================
-    const toolsCol = collection(db, "tools");
-
+    // ✅ Load sin orderBy (evita índices en Firestore)
     async function loadTools(){
       setStatus("Cargando catálogo");
-      const qy = query(toolsCol, orderBy("category"), orderBy("name"));
-      const snap = await getDocs(qy);
+      const snap = await getDocs(toolsCol);
       const list = [];
       snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+
+      // ordenar localmente
+      list.sort((a,b)=>{
+        const ca = (a.category||"").localeCompare(b.category||"");
+        if(ca !== 0) return ca;
+        return (a.name||"").localeCompare(b.name||"");
+      });
+
       renderTree(list);
       setStatus(`Listo • ${list.length} herramienta(s)`);
       return list;
@@ -593,16 +593,36 @@
       }
     }
 
-    function openCloudTool(tool){
+    // ✅ Abrir por srcdoc: trae el HTML desde Storage, inyecta <base href="...">
+    async function openCloudTool(tool){
       currentTitle.textContent = tool.name || "Herramienta";
       currentPath.textContent = `${tool.category} • Firebase`;
 
-      viewer.removeAttribute("srcdoc");
-      viewer.src = tool.url;
+      try{
+        setStatus(`Abriendo: ${tool.name}`);
 
-      localStorage.setItem(LS.lastDocId, tool.id);
+        const res = await fetch(tool.url, { cache: "no-store" });
+        if(!res.ok) throw new Error(`HTTP ${res.status}`);
+        const html = await res.text();
 
-      if(isMobile()) sidebar.classList.add("hidden-mobile");
+        const withBase = html.replace(
+          /<head(\s[^>]*)?>/i,
+          (m) => `${m}\n<base href="${tool.url}">`
+        );
+
+        viewer.removeAttribute("src");
+        viewer.srcdoc = withBase;
+
+        localStorage.setItem(LS.lastDocId, tool.id);
+
+        setStatus(`Listo: ${tool.name}`);
+
+        if(isMobile()) sidebar.classList.add("hidden-mobile");
+      }catch(err){
+        console.error(err);
+        setStatus("No se pudo abrir el HTML", false);
+        alert("No se pudo abrir el HTML. Revisa consola (F12).");
+      }
     }
 
     async function deleteCloudTool(tool){
@@ -625,9 +645,6 @@
       }
     }
 
-    // =========================
-    // Upload flow: preview instant + upload to Storage + register in Firestore
-    // =========================
     function readAsText(file){
       return new Promise((resolve, reject) => {
         const fr = new FileReader();
@@ -642,22 +659,21 @@
       const baseName = file.name.replace(/\.html?$/i, "");
       const ts = Date.now();
 
-      // 1) Preview now (para sentir que “sí hace algo”)
+      // Preview inmediato
       const htmlText = await readAsText(file);
       currentTitle.textContent = baseName;
       currentPath.textContent = `${category} • Subiendo`;
       viewer.removeAttribute("src");
       viewer.srcdoc = htmlText;
 
-      // 2) Upload to Storage
       setStatus(`Subiendo: ${file.name}`);
+
       const storagePath = `tools/${category}/${ts}_${safeName}`;
       const storageRef = ref(storage, storagePath);
 
       await uploadBytes(storageRef, file, { contentType: "text/html" });
       const url = await getDownloadURL(storageRef);
 
-      // 3) Register in Firestore
       await addDoc(toolsCol, {
         name: baseName,
         category,
@@ -690,9 +706,7 @@
       }
     }
 
-    // =========================
     // Events
-    // =========================
     document.getElementById("toggleSide").addEventListener("click", () => {
       if(isMobile()){
         sidebar.classList.toggle("hidden-mobile");
@@ -740,7 +754,6 @@
         alert("Primero abre una herramienta.");
         return;
       }
-      // Rebuscamos el URL en Firestore cache (cargando lista de nuevo)
       const list = await loadTools();
       const tool = list.find(x => x.id === lastId);
       if(!tool?.url){
@@ -760,9 +773,7 @@
       }
     });
 
-    // =========================
     // Init
-    // =========================
     loadCollapsed();
     showHome();
     if(isMobile()) sidebar.classList.add("hidden-mobile");
