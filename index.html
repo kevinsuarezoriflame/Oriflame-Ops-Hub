@@ -1501,7 +1501,7 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
 
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
   import {
-    getFirestore, doc, onSnapshot, setDoc, serverTimestamp
+    getFirestore, doc, collection, getDocs, writeBatch, onSnapshot, setDoc, serverTimestamp
   } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
   // === Tu configuración Firebase ===
@@ -1521,6 +1521,9 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
   const hojaRef = doc(db, "appState", "hoja");
   // Documento de textos (pueden ser grandes)
   const textosRef = doc(db, "appState", "hoja_texts");
+
+  // Subcolección para chunks de texto (cuando Reservado es gigante)
+  const textosChunksCol = collection(db, "appState", "hoja_texts", "chunks");
 
   // Identidad del cliente (para evitar bucles: "yo guardé → me llega snapshot")
   const CLIENT_ID = (() => {
@@ -1562,6 +1565,125 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     }
     return bytes;
   }
+
+function splitIntoChunksByBytes(str, maxBytes){
+  const out = [];
+  if (!str) return out;
+  let start = 0;
+  let i = 0;
+  let bytes = 0;
+  while (i < str.length){
+    const ch = str.charCodeAt(i);
+    let b = 0;
+    if (ch <= 0x7f) b = 1;
+    else if (ch <= 0x7ff) b = 2;
+    else if (ch >= 0xd800 && ch <= 0xdbff) { b = 4; i++; } // surrogate pair
+    else b = 3;
+
+    if (bytes + b > maxBytes){
+      out.push(str.slice(start, i));
+      start = i;
+      bytes = 0;
+    } else {
+      bytes += b;
+      i++;
+    }
+  }
+  if (start < str.length) out.push(str.slice(start));
+  return out;
+}
+
+async function clearAllTextChunks(){
+  try{
+    const snap = await getDocs(textosChunksCol);
+    if (snap.empty) return;
+    const batch = writeBatch(db);
+    snap.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }catch(e){
+    console.warn("No se pudo limpiar chunks:", e);
+  }
+}
+
+async function saveTextsSmart(now){
+  const pl = document.getElementById("plInput")?.value || "";
+  const res = document.getElementById("resInput")?.value || "";
+  const bulk = document.getElementById("bulkInput")?.value || "";
+
+  const totalBytes = approxBytes(pl)+approxBytes(res)+approxBytes(bulk);
+
+  // Si cabe cómodo en el doc, guardamos directo (más simple / rápido)
+  if (totalBytes <= 900000){
+    await clearAllTextChunks();
+    await setDoc(textosRef, {
+      version: 3,
+      chunked: false,
+      clientId: CLIENT_ID,
+      clientUpdatedAt: now,
+      plText: pl,
+      resText: res,
+      bulkText: bulk,
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+    return { mode: "direct", totalBytes };
+  }
+
+  // Si no cabe: chunking (el Reservado suele ser el culpable)
+  const MAX_CHUNK = 380000; // bytes aprox por chunk (seguro bajo 1MB total por doc)
+  const plChunks = splitIntoChunksByBytes(pl, MAX_CHUNK);
+  const resChunks = splitIntoChunksByBytes(res, MAX_CHUNK);
+  const bulkChunks = splitIntoChunksByBytes(bulk, MAX_CHUNK);
+
+  // Reemplazar chunks
+  const existing = await getDocs(textosChunksCol);
+  const batch = writeBatch(db);
+  existing.forEach(d => batch.delete(d.ref));
+
+  const putChunks = (key, arr) => {
+    arr.forEach((data, idx) => {
+      const id = key + "_" + String(idx).padStart(4,"0");
+      const ref = doc(db, "appState", "hoja_texts", "chunks", id);
+      batch.set(ref, { key, idx, data });
+    });
+  };
+  putChunks("pl", plChunks);
+  putChunks("res", resChunks);
+  putChunks("bulk", bulkChunks);
+
+  // Meta doc
+  batch.set(textosRef, {
+    version: 3,
+    chunked: true,
+    clientId: CLIENT_ID,
+    clientUpdatedAt: now,
+    plCount: plChunks.length,
+    resCount: resChunks.length,
+    bulkCount: bulkChunks.length,
+    totalBytes,
+    updatedAt: serverTimestamp()
+  }, { merge: true });
+
+  await batch.commit();
+  return { mode: "chunked", totalBytes, plCount: plChunks.length, resCount: resChunks.length, bulkCount: bulkChunks.length };
+}
+
+async function loadTextsFromChunksIfNeeded(meta){
+  if (!meta || !meta.chunked) return null;
+  const snap = await getDocs(textosChunksCol);
+  const groups = { pl: [], res: [], bulk: [] };
+  snap.forEach(d => {
+    const v = d.data() || {};
+    if (!v.key || typeof v.idx !== "number" || typeof v.data !== "string") return;
+    if (!groups[v.key]) groups[v.key] = [];
+    groups[v.key].push({ idx: v.idx, data: v.data });
+  });
+  const join = (arr) => arr.sort((a,b)=>a.idx-b.idx).map(x=>x.data).join("");
+  return {
+    plText: join(groups.pl || []),
+    resText: join(groups.res || []),
+    bulkText: join(groups.bulk || [])
+  };
+}
 
 function snapshotToPlainObjectMap(m) {
     // Map -> Object
@@ -1614,22 +1736,16 @@ function snapshotToPlainObjectMap(m) {
         const statePayload = getStatePayload();
         const textsPayload = getTextsPayload();
 
-        // Seguridad: evitar exceder límite (~1MB por doc)
-        const totalBytes = approxBytes(textsPayload.plText) + approxBytes(textsPayload.resText) + approxBytes(textsPayload.bulkText);
-        if (totalBytes > 950000) {
-          setSyncBadge(`Sync: ERROR (texto muy grande: ${Math.round(totalBytes/1024)} KB)`, false);
-          console.warn('Texto demasiado grande para Firestore (~1MB). Reduce Reservado (quita columnas o separa por bloques).');
-          return;
-        }
+        
+// Guardamos estado ligero y textos (smart: directo o chunked si es enorme)
+lastLocalWriteState = statePayload.clientUpdatedAt;
+lastLocalWriteTexts = textsPayload.clientUpdatedAt;
 
-        lastLocalWriteState = statePayload.clientUpdatedAt;
-        lastLocalWriteTexts = textsPayload.clientUpdatedAt;
-
-        await Promise.all([
-          setDoc(hojaRef, { ...statePayload, updatedAt: serverTimestamp() }, { merge: true }),
-          setDoc(textosRef, { ...textsPayload, updatedAt: serverTimestamp() }, { merge: true })
-        ]);
-        setSyncBadge('Sync: OK (guardado)');
+await Promise.all([
+  setDoc(hojaRef, { ...statePayload, updatedAt: serverTimestamp() }, { merge: true }),
+  saveTextsSmart(textsPayload.clientUpdatedAt)
+]);
+setSyncBadge('Sync: OK (guardado)');
       } catch(e) {
         console.warn("No se pudo guardar en Firebase:", e);
         setSyncBadge("Sync: ERROR (ver consola)", false);
@@ -1669,7 +1785,7 @@ function snapshotToPlainObjectMap(m) {
     try {
       await Promise.all([
         setDoc(hojaRef, statePayload, { merge: true }),
-        setDoc(textosRef, textsPayload, { merge: true })
+        (async()=>{ await clearAllTextChunks(); await setDoc(textosRef, { ...textsPayload, chunked:false }, { merge: true }); })()
       ]);
     } catch(e) {
       console.warn("No se pudo limpiar en Firebase:", e);
@@ -1704,11 +1820,30 @@ function snapshotToPlainObjectMap(m) {
 
     isApplyingRemote = true;
 
-    if (typeof data.plText === "string") document.getElementById("plInput").value = data.plText;
-    if (typeof data.resText === "string") document.getElementById("resInput").value = data.resText;
-    if (typeof data.bulkText === "string") document.getElementById("bulkInput").value = data.bulkText;
+    
+// Si está chunked, reconstruimos desde subcolección; si no, usamos campos directos
+if (data.chunked) {
+  loadTextsFromChunksIfNeeded(data).then((t) => {
+    if (!t) return;
+    document.getElementById("plInput").value = t.plText || "";
+    document.getElementById("resInput").value = t.resText || "";
+    document.getElementById("bulkInput").value = t.bulkText || "";
+    // Recalcular luego de aplicar textos
+    const hasAny2 = (document.getElementById("plInput").value.trim() ||
+                     document.getElementById("resInput").value.trim() ||
+                     document.getElementById("bulkInput").value.trim());
+    if (hasAny2) { try { process(); } catch(e) {} }
+    isApplyingRemote = false;
+    setSyncBadge("Sync: OK (cargado)");
+  }).catch((e)=>{ console.warn("No se pudo cargar chunks:", e); isApplyingRemote=false; setSyncBadge("Sync: ERROR (chunks)", false); });
+} else {
+  if (typeof data.plText === "string") document.getElementById("plInput").value = data.plText;
+  if (typeof data.resText === "string") document.getElementById("resInput").value = data.resText;
+  if (typeof data.bulkText === "string") document.getElementById("bulkInput").value = data.bulkText;
+}
 
     // Recalcular reporte si hay data suficiente
+    if (data.chunked) return; // se recalcula cuando terminen de cargar los chunks
     const hasAny = (document.getElementById("plInput").value.trim() ||
                     document.getElementById("resInput").value.trim() ||
                     document.getElementById("bulkInput").value.trim());
