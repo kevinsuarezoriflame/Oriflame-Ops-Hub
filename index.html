@@ -321,6 +321,7 @@
     <div class="wrap brand">
       <div class="brand-left">
         <div class="capsule">ORIFLAME · Operaciones</div>
+        <div id="syncBadge" style="margin-top:6px;font-size:12px;color:#0f5132;background:#d1e7dd;border:1px solid #badbcc;padding:6px 10px;border-radius:10px;display:inline-block;">Sync: esperando…</div>
         <div class="hero">
           <h1>Reporte a PL</h1>
           <div class="sub">Nivel 1 vs Nivel 2+ vs Zona Air/CW</div>
@@ -1540,7 +1541,29 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
   let lastLocalWriteTexts = 0;
   let saveTimer = null;
 
-  function snapshotToPlainObjectMap(m) {
+  
+  function setSyncBadge(msg, ok=true){
+    const el=document.getElementById("syncBadge");
+    if(!el) return;
+    el.textContent = msg;
+    el.style.background = ok ? "#d1e7dd" : "#f8d7da";
+    el.style.borderColor = ok ? "#badbcc" : "#f5c2c7";
+    el.style.color = ok ? "#0f5132" : "#842029";
+  }
+  function approxBytes(str){ // UTF-8 rough estimate
+    if(!str) return 0;
+    let bytes = 0;
+    for(let i=0;i<str.length;i++){
+      const code=str.charCodeAt(i);
+      if(code<=0x7f) bytes+=1;
+      else if(code<=0x7ff) bytes+=2;
+      else if(code>=0xd800 && code<=0xdbff){ bytes+=4; i++; }
+      else bytes+=3;
+    }
+    return bytes;
+  }
+
+function snapshotToPlainObjectMap(m) {
     // Map -> Object
     const obj = {};
     for (const [k,v] of m.entries()) obj[k] = v;
@@ -1582,13 +1605,22 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     };
   }
 
-  function scheduleSave() {
+  function scheduleSave(){
     if (isApplyingRemote) return;
+    setSyncBadge("Sync: guardando…");
     clearTimeout(saveTimer);
     saveTimer = setTimeout(async () => {
       try {
         const statePayload = getStatePayload();
         const textsPayload = getTextsPayload();
+
+        // Seguridad: evitar exceder límite (~1MB por doc)
+        const totalBytes = approxBytes(textsPayload.plText) + approxBytes(textsPayload.resText) + approxBytes(textsPayload.bulkText);
+        if (totalBytes > 950000) {
+          setSyncBadge(`Sync: ERROR (texto muy grande: ${Math.round(totalBytes/1024)} KB)`, false);
+          console.warn('Texto demasiado grande para Firestore (~1MB). Reduce Reservado (quita columnas o separa por bloques).');
+          return;
+        }
 
         lastLocalWriteState = statePayload.clientUpdatedAt;
         lastLocalWriteTexts = textsPayload.clientUpdatedAt;
@@ -1597,8 +1629,10 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
           setDoc(hojaRef, { ...statePayload, updatedAt: serverTimestamp() }, { merge: true }),
           setDoc(textosRef, { ...textsPayload, updatedAt: serverTimestamp() }, { merge: true })
         ]);
+        setSyncBadge('Sync: OK (guardado)');
       } catch(e) {
         console.warn("No se pudo guardar en Firebase:", e);
+        setSyncBadge("Sync: ERROR (ver consola)", false);
       }
     }, 450);
   }
@@ -1643,6 +1677,7 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
 
     // Aplicar también local
     isApplyingRemote = true;
+    setSyncBadge("Sync: cargando…");
     document.getElementById("plInput").value = "";
     document.getElementById("resInput").value = "";
     document.getElementById("bulkInput").value = "";
@@ -1691,6 +1726,7 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     }
 
     isApplyingRemote = false;
+    setSyncBadge("Sync: OK (cargado)");
   });
 
   // ===== Listener 2: Estado operativo (qty, lotes, pestañas) =====
