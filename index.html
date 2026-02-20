@@ -1495,11 +1495,15 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
 <script type="module">
   // ===== Firebase (Firestore) Sync =====
   // Objetivo: que al cerrar la página quede TODO igual y solo se borre con "Limpiar hoja".
+  // Nota: Firestore tiene límite ~1MB por documento. Para que el bloque "Reservado" no reviente el doc,
+  // guardamos los 3 textos (PL/Reservado/Bulk) en un documento aparte: appState/hoja_texts.
+
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
   import {
     getFirestore, doc, onSnapshot, setDoc, serverTimestamp
   } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
+  // === Tu configuración Firebase ===
   const firebaseConfig = {
     apiKey: "AIzaSyDdXF24bG8QL22a8lkHeHd4ToNq5qDdAI4",
     authDomain: "oriflame-ops-hub.firebaseapp.com",
@@ -1512,7 +1516,10 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
 
+  // Documento de estado (ligero)
   const hojaRef = doc(db, "appState", "hoja");
+  // Documento de textos (pueden ser grandes)
+  const textosRef = doc(db, "appState", "hoja_texts");
 
   // Identidad del cliente (para evitar bucles: "yo guardé → me llega snapshot")
   const CLIENT_ID = (() => {
@@ -1529,7 +1536,8 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
   })();
 
   let isApplyingRemote = false;
-  let lastLocalWrite = 0;
+  let lastLocalWriteState = 0;
+  let lastLocalWriteTexts = 0;
   let saveTimer = null;
 
   function snapshotToPlainObjectMap(m) {
@@ -1549,15 +1557,12 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     return m;
   }
 
-  function getFullStateForSave() {
+  function getStatePayload() {
     return {
-      version: 1,
+      version: 2,
       clientId: CLIENT_ID,
       clientUpdatedAt: Date.now(),
-      plText: document.getElementById("plInput")?.value || "",
-      resText: document.getElementById("resInput")?.value || "",
-      bulkText: document.getElementById("bulkInput")?.value || "",
-      // Estado operativo
+      // Estado operativo (ligero)
       qtyById: snapshotToPlainObjectMap(STATE.qtyById),
       batchesByPanel: STATE.batchesByPanel || {p1:[],p2:[],p3:[]},
       selectedBatchIdByPanel: STATE.selectedBatchIdByPanel || {p1:null,p2:null,p3:null},
@@ -1566,17 +1571,32 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     };
   }
 
+  function getTextsPayload() {
+    return {
+      version: 2,
+      clientId: CLIENT_ID,
+      clientUpdatedAt: Date.now(),
+      plText: document.getElementById("plInput")?.value || "",
+      resText: document.getElementById("resInput")?.value || "",
+      bulkText: document.getElementById("bulkInput")?.value || ""
+    };
+  }
+
   function scheduleSave() {
     if (isApplyingRemote) return;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(async () => {
       try {
-        const payload = getFullStateForSave();
-        lastLocalWrite = payload.clientUpdatedAt;
-        await setDoc(hojaRef, {
-          ...payload,
-          updatedAt: serverTimestamp()
-        }, { merge: true });
+        const statePayload = getStatePayload();
+        const textsPayload = getTextsPayload();
+
+        lastLocalWriteState = statePayload.clientUpdatedAt;
+        lastLocalWriteTexts = textsPayload.clientUpdatedAt;
+
+        await Promise.all([
+          setDoc(hojaRef, { ...statePayload, updatedAt: serverTimestamp() }, { merge: true }),
+          setDoc(textosRef, { ...textsPayload, updatedAt: serverTimestamp() }, { merge: true })
+        ]);
       } catch(e) {
         console.warn("No se pudo guardar en Firebase:", e);
       }
@@ -1585,13 +1605,16 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
 
   // Exponer una función global para "Limpiar hoja"
   window.limpiarHoja = async function () {
-    const payload = {
-      version: 1,
+    if (!confirm("¿Seguro que deseas limpiar la hoja? Esto se borrará para TODOS.")) return;
+
+    const now = Date.now();
+    lastLocalWriteState = now;
+    lastLocalWriteTexts = now;
+
+    const statePayload = {
+      version: 2,
       clientId: CLIENT_ID,
-      clientUpdatedAt: Date.now(),
-      plText: "",
-      resText: "",
-      bulkText: "",
+      clientUpdatedAt: now,
       qtyById: {},
       batchesByPanel: {p1:[],p2:[],p3:[]},
       selectedBatchIdByPanel: {p1:null,p2:null,p3:null},
@@ -1599,8 +1622,24 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
       activeSubByPanel: {p1:"p1-report",p2:"p2-report",p3:"p3-report"},
       updatedAt: serverTimestamp()
     };
-    lastLocalWrite = payload.clientUpdatedAt;
-    await setDoc(hojaRef, payload, { merge: true });
+    const textsPayload = {
+      version: 2,
+      clientId: CLIENT_ID,
+      clientUpdatedAt: now,
+      plText: "",
+      resText: "",
+      bulkText: "",
+      updatedAt: serverTimestamp()
+    };
+
+    try {
+      await Promise.all([
+        setDoc(hojaRef, statePayload, { merge: true }),
+        setDoc(textosRef, textsPayload, { merge: true })
+      ]);
+    } catch(e) {
+      console.warn("No se pudo limpiar en Firebase:", e);
+    }
 
     // Aplicar también local
     isApplyingRemote = true;
@@ -1613,42 +1652,57 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     STATE.batchesByPanel={p1:[],p2:[],p3:[]};
     STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
     STATE.moveById = new Map();
+
     refreshAllTables();
     setActivePanel("p1");
     setActiveSub("p1","p1-report");
     isApplyingRemote = false;
   };
 
-  // Cargar y sincronizar
-  onSnapshot(hojaRef, (snap) => {
+  // ===== Listener 1: Textos (PL/Reservado/Bulk) =====
+  onSnapshot(textosRef, (snap) => {
     if (!snap.exists()) return;
     const data = snap.data() || {};
 
     // Ignorar eco de mi propia escritura
-    if (data.clientId === CLIENT_ID && data.clientUpdatedAt && data.clientUpdatedAt === lastLocalWrite) return;
+    if (data.clientId === CLIENT_ID && data.clientUpdatedAt && data.clientUpdatedAt === lastLocalWriteTexts) return;
 
     isApplyingRemote = true;
 
-    // 1) Inputs
     if (typeof data.plText === "string") document.getElementById("plInput").value = data.plText;
     if (typeof data.resText === "string") document.getElementById("resInput").value = data.resText;
     if (typeof data.bulkText === "string") document.getElementById("bulkInput").value = data.bulkText;
 
-    // 2) Recalcular reporte si hay data suficiente
+    // Recalcular reporte si hay data suficiente
     const hasAny = (document.getElementById("plInput").value.trim() ||
                     document.getElementById("resInput").value.trim() ||
                     document.getElementById("bulkInput").value.trim());
     if (hasAny) {
-      try { process(); } catch(e) { /* process ya tiene alert si falla */ }
+      try { process(); } catch(e) { /* process ya maneja alert */ }
     } else {
       STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
       STATE.qtyById = new Map();
       STATE.batchesByPanel={p1:[],p2:[],p3:[]};
       STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
       STATE.moveById = new Map();
+      refreshAllTables();
+      setActivePanel("p1");
+      setActiveSub("p1","p1-report");
     }
 
-    // 3) Restaurar estado operativo
+    isApplyingRemote = false;
+  });
+
+  // ===== Listener 2: Estado operativo (qty, lotes, pestañas) =====
+  onSnapshot(hojaRef, (snap) => {
+    if (!snap.exists()) return;
+    const data = snap.data() || {};
+
+    // Ignorar eco de mi propia escritura
+    if (data.clientId === CLIENT_ID && data.clientUpdatedAt && data.clientUpdatedAt === lastLocalWriteState) return;
+
+    isApplyingRemote = true;
+
     STATE.qtyById = objectToMap(data.qtyById);
     if (data.batchesByPanel) STATE.batchesByPanel = data.batchesByPanel;
     if (data.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = data.selectedBatchIdByPanel;
@@ -1676,24 +1730,28 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     setTimeout(scheduleSave, 50);
   });
 
-  // Guardar cambios de qty (el listener ya existe; aquí solo escuchamos el evento y guardamos)
+  // Guardar cambios de qty
   document.addEventListener("input", (ev) => {
     const el = ev.target;
     if (el && el.matches('input[data-role="qty"]')) scheduleSave();
   });
 
   // Guardar cuando se crean lotes / cambian lotes / cambian pestañas
-  ["p1CopyPending","p2CopyPending","p3CopyPending","p1BatchSelect","p2BatchSelect","p3BatchSelect","p1CopyBatch","p2CopyBatch","p3CopyBatch"].forEach(id => {
+  [
+    "p1CopyPending","p2CopyPending","p3CopyPending",
+    "p1BatchSelect","p2BatchSelect","p3BatchSelect",
+    "p1MakeBatch","p2MakeBatch","p3MakeBatch",
+    "tabP1","tabP2","tabP3",
+    "btnP1Report","btnP1Pending","btnP1Batch",
+    "btnP2Report","btnP2Pending","btnP2Batch",
+    "btnP3Report","btnP3Pending","btnP3Batch"
+  ].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
-    el.addEventListener("click", () => setTimeout(scheduleSave, 80));
-    el.addEventListener("change", () => setTimeout(scheduleSave, 80));
+    el.addEventListener("click", () => setTimeout(scheduleSave, 60));
+    el.addEventListener("change", () => setTimeout(scheduleSave, 60));
   });
 
-  document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => setTimeout(scheduleSave, 80)));
-  document.querySelectorAll(".subtab").forEach(s => s.addEventListener("click", () => setTimeout(scheduleSave, 80)));
-
-  console.log("✅ Firebase Sync listo. Cliente:", CLIENT_ID);
 </script>
 </body>
 </html>
