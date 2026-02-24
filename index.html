@@ -60,7 +60,7 @@
       text-transform: uppercase; font-size: 12px;
     }
 
-    .hero{ display:flex; align-items:baseline; gap:10px; }
+    .hero{ display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
     .hero h1{ margin:0; font-size: 28px; font-weight: 950; letter-spacing: .01em; color: var(--accent); }
     .hero .sub{
       font-size: 12px; color: var(--sub);
@@ -114,7 +114,6 @@
     .btn.accent{ background: var(--accent); color:#fff; border-color: var(--accent); }
     .btn.small{ padding: 7px 9px; border-radius: 10px; font-size: 12px; }
     .btn.danger{ background: #fff; border-color: rgba(185,28,28,.35); color: var(--bad); }
-    .btn.pending{ background: rgba(185,28,28,.08); border-color: rgba(185,28,28,.25); color: var(--bad); }
     .btn:disabled{ opacity:.45; cursor:not-allowed; transform:none; box-shadow:none; }
 
     .footer-actions{
@@ -278,36 +277,6 @@
       outline: none;
     }
     select:focus{ border-color: var(--accentLine); box-shadow: 0 0 0 4px var(--accentSoft); }
-
-    @media print{
-      header, .inputs, .no-print{ display:none !important; }
-      body{ background:#fff; }
-      .wrap{ max-width: none; padding: 0; }
-      .card{ box-shadow: none; border-radius: 0; border: none; }
-      .table-wrap{ max-height: none; overflow: visible; border:none; }
-      th{ position: static; }
-      [data-printable]{ display:none !important; }
-
-      body[data-print-target="p1-report"] #p1-report,
-      body[data-print-target="p1-plfmt"] #p1-plfmt,
-      body[data-print-target="p2-report"] #p2-report,
-      body[data-print-target="p2-plfmt"] #p2-plfmt,
-      body[data-print-target="p3-report"] #p3-report,
-      body[data-print-target="p3-plfmt"] #p3-plfmt,
-      body[data-print-target="day-report"] #day-report { display:block !important; }
-
-      body[data-print-target$="plfmt"] table{ font-size: 13px !important; }
-      body[data-print-target$="plfmt"] th{
-        font-size: 12px !important;
-        color:#1f2937 !important;
-        border-bottom: 2px solid #9adfd4 !important;
-      }
-      body[data-print-target$="plfmt"] td{
-        padding: 8px 7px !important;
-        border-bottom: 2px solid #bfeee5 !important;
-      }
-      body[data-print-target$="plfmt"] .table-wrap{ border: 1px solid #9adfd4 !important; }
-    }
   </style>
 </head>
 
@@ -316,7 +285,15 @@
     <div class="wrap brand">
       <div class="brand-left">
         <div class="capsule">ORIFLAME · Operaciones</div>
-        <div id="syncBadge" style="margin-top:6px;font-size:12px;color:#0f5132;background:#d1e7dd;border:1px solid #badbcc;padding:6px 10px;border-radius:10px;display:inline-block;">Sync: esperando…</div>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px;">
+          <div id="syncBadge" style="font-size:12px;color:#0f5132;background:#d1e7dd;border:1px solid #badbcc;padding:6px 10px;border-radius:10px;display:inline-block;">
+            Sync: iniciando…
+          </div>
+          <button class="btn small" id="applyRemote" style="display:none;">↻ Recargar nube</button>
+          <button class="btn small" id="forceSave" title="Guarda ahora (nube + local)">💾 Guardar ahora</button>
+        </div>
+
         <div class="hero">
           <h1>Reporte a PL</h1>
           <div class="sub">Nivel 1 vs Nivel 2+ vs Zona Air/CW</div>
@@ -333,9 +310,7 @@
           <small>Variante + Caja + Physical Quantity</small>
         </div>
         <div class="bd">
-          <textarea id="plInput" placeholder="Bodega	Variante	Zona	Ubicación	Caja	Physical Quantity
-14	42663	A	PL	0-0000	1
-14	38802	A	PL	0-0000	1"></textarea>
+          <textarea id="plInput" placeholder="Pega aquí tu STOCK PL (TSV)."></textarea>
         </div>
       </div>
 
@@ -345,8 +320,7 @@
           <small>Código + Descripción + Reserved + Caja (Ubicación PL)</small>
         </div>
         <div class="bd">
-          <textarea id="resInput" placeholder="Código Producto	Descripción	Stock Qty	Nivel Mín.	Reserved	Blocked	Puesto	Caja
-832020	PROMOBOX	6510	0	47	31	9	I 09-03C"></textarea>
+          <textarea id="resInput" placeholder="Pega aquí tu STOCK RESERVADO (TSV)."></textarea>
         </div>
       </div>
 
@@ -356,20 +330,23 @@
           <small>Variante + Ubicación + Physical Quantity</small>
         </div>
         <div class="bd">
-          <textarea id="bulkInput" placeholder="Bodega	Variante	Zona	Ubicación	Caja	Physical Quantity
-14	38983	Bulk	01-30-068-01		106
-14	44655	Bulk	Bulk_CW2		270"></textarea>
+          <textarea id="bulkInput" placeholder="Pega aquí tu STOCK BULK (TSV)."></textarea>
 
           <div class="footer-actions">
             <div class="right">
-              <button class="btn danger" id="clearAll">🧹 Limpiar hoja</button>
+              <button class="btn danger" id="clearAll">🧹 Limpiar hoja (GLOBAL)</button>
               <button class="btn primary" id="process">Procesar reporte</button>
             </div>
+          </div>
+
+          <div style="margin-top:8px;color:#475569;font-size:12px;">
+            ✅ Persistencia: al recargar, se restaura desde <b>nube</b> (y fallback local). Solo se borra con <b>Limpiar hoja</b>.
           </div>
         </div>
       </div>
     </div>
 
+    <!-- OUTPUT -->
     <div class="card" id="outCard" style="margin-top:12px;">
       <div class="tabs no-print">
         <div class="tab active" data-panel="p1">Panel 1: Nivel 1 (a pie)</div>
@@ -395,9 +372,9 @@
 
         <div class="subtabs no-print">
           <div class="subtabs-left">
-            <div class="subtab active" data-sub="p1-report">Reporte (Imprimir)</div>
+            <div class="subtab active" data-sub="p1-report">Reporte</div>
             <div class="subtab pending" data-sub="p1-pending">Pendientes</div>
-            <div class="subtab" data-sub="p1-plfmt">Formato PL (Imprimir por lote)</div>
+            <div class="subtab" data-sub="p1-plfmt">Formato PL</div>
           </div>
         </div>
 
@@ -418,11 +395,6 @@
                 <tbody id="p1ReportBody"></tbody>
               </table>
             </div>
-            <div class="footer-actions no-print">
-              <div class="right">
-                <button class="btn small" data-print="p1-report">Imprimir</button>
-              </div>
-            </div>
           </div>
 
           <div id="p1-pending" class="hidden" data-printable>
@@ -433,7 +405,7 @@
                     <th style="width:90px;">Código</th>
                     <th style="width:170px;">Posición Bulk</th>
                     <th style="width:80px;">Pasar</th>
-                    <th style="width:160px;">Qty (vacío)</th>
+                    <th style="width:160px;">Qty</th>
                   </tr>
                 </thead>
                 <tbody id="p1PendingBody"></tbody>
@@ -455,7 +427,6 @@
               </div>
               <div class="right">
                 <button class="btn small" id="p1CopyBatch">Copiar lote</button>
-                <button class="btn small" data-print="p1-plfmt">Imprimir lote</button>
               </div>
             </div>
 
@@ -490,9 +461,9 @@
 
         <div class="subtabs no-print">
           <div class="subtabs-left">
-            <div class="subtab active" data-sub="p2-report">Reporte (Imprimir)</div>
+            <div class="subtab active" data-sub="p2-report">Reporte</div>
             <div class="subtab pending" data-sub="p2-pending">Pendientes</div>
-            <div class="subtab" data-sub="p2-plfmt">Formato PL (Imprimir por lote)</div>
+            <div class="subtab" data-sub="p2-plfmt">Formato PL</div>
           </div>
         </div>
 
@@ -513,11 +484,6 @@
                 <tbody id="p2ReportBody"></tbody>
               </table>
             </div>
-            <div class="footer-actions no-print">
-              <div class="right">
-                <button class="btn small" data-print="p2-report">Imprimir</button>
-              </div>
-            </div>
           </div>
 
           <div id="p2-pending" class="hidden" data-printable>
@@ -528,7 +494,7 @@
                     <th style="width:90px;">Código</th>
                     <th style="width:170px;">Posición Bulk</th>
                     <th style="width:80px;">Pasar</th>
-                    <th style="width:160px;">Qty (vacío)</th>
+                    <th style="width:160px;">Qty</th>
                   </tr>
                 </thead>
                 <tbody id="p2PendingBody"></tbody>
@@ -550,7 +516,6 @@
               </div>
               <div class="right">
                 <button class="btn small" id="p2CopyBatch">Copiar lote</button>
-                <button class="btn small" data-print="p2-plfmt">Imprimir lote</button>
               </div>
             </div>
 
@@ -585,9 +550,9 @@
 
         <div class="subtabs no-print">
           <div class="subtabs-left">
-            <div class="subtab active" data-sub="p3-report">Reporte (Imprimir)</div>
+            <div class="subtab active" data-sub="p3-report">Reporte</div>
             <div class="subtab pending" data-sub="p3-pending">Pendientes</div>
-            <div class="subtab" data-sub="p3-plfmt">Formato PL (Imprimir por lote)</div>
+            <div class="subtab" data-sub="p3-plfmt">Formato PL</div>
           </div>
         </div>
 
@@ -608,11 +573,6 @@
                 <tbody id="p3ReportBody"></tbody>
               </table>
             </div>
-            <div class="footer-actions no-print">
-              <div class="right">
-                <button class="btn small" data-print="p3-report">Imprimir</button>
-              </div>
-            </div>
           </div>
 
           <div id="p3-pending" class="hidden" data-printable>
@@ -623,7 +583,7 @@
                     <th style="width:90px;">Código</th>
                     <th style="width:170px;">Posición Bulk</th>
                     <th style="width:80px;">Pasar</th>
-                    <th style="width:160px;">Qty (vacío)</th>
+                    <th style="width:160px;">Qty</th>
                   </tr>
                 </thead>
                 <tbody id="p3PendingBody"></tbody>
@@ -645,7 +605,6 @@
               </div>
               <div class="right">
                 <button class="btn small" id="p3CopyBatch">Copiar lote</button>
-                <button class="btn small" data-print="p3-plfmt">Imprimir lote</button>
               </div>
             </div>
 
@@ -667,37 +626,11 @@
         </div>
       </section>
 
-      <!-- DAY REPORT -->
-      <section id="day-report" class="hidden" data-printable>
-        <div class="wrap" style="padding: 0 12px 12px;">
-          <div class="capsule" style="margin:12px 0 6px;">ORIFLAME · Operaciones</div>
-          <div class="hero" style="margin-bottom:10px;">
-            <h1 style="font-size:20px;">Trabajo del día</h1>
-            <div class="sub" id="dayDate"></div>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th style="width:86px;">Código</th>
-                  <th style="width:190px;">Posición Bulk</th>
-                  <th style="width:140px;">Posición PL</th>
-                  <th style="width:90px;">Qty</th>
-                  <th style="width:140px;">Panel</th>
-                  <th style="width:220px;">Lote</th>
-                </tr>
-              </thead>
-              <tbody id="dayBody"></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
     </div>
   </main>
 
 <script>
-/* Helpers */
+/* ========= Core (igual que tu versión) ========= */
 function norm(s){ return (s ?? "").toString().trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,""); }
 function toInt(v){
   const s=(v??"").toString().trim();
@@ -735,7 +668,6 @@ function isValidPLBox(loc){
   if(norm(s)==="0-0000") return false;
   return true;
 }
-
 function bulkLevel(loc){
   const s=(loc||"").toString().trim();
   const m=s.match(/^(\d{2})-(\d{2})-(\d{3})-(\d{2})$/);
@@ -748,7 +680,6 @@ function bulkAisle(loc){
   if(!m) return null;
   return parseInt(m[1],10);
 }
-
 function specialRank(loc){
   const s=(loc||"").toString().trim();
   const n=norm(s);
@@ -760,7 +691,6 @@ function specialRank(loc){
   if(n===norm("Aereos_CW")) return 9030;
   return 9999;
 }
-
 function escapeHTML(s){
   return (s??"").toString()
     .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
@@ -808,17 +738,14 @@ const AIRCW_SET = new Set([
 ]);
 function isAirCW(loc){ return AIRCW_SET.has(norm((loc||"").toString().trim())); }
 
-/* Choose best PL location from a list (used for Reserved "Caja" too) */
+/* Choose best PL location from a list */
 function choosePLLocation(locs){
   const clean = (locs||[]).map(x=>(x||"").toString().trim()).filter(Boolean);
   if(clean.length===0) return "0-0000";
-
   const good = clean.find(isGoodPLLocation);
   if(good) return good;
-
   const anyValid = clean.find(isValidPLBox);
   if(anyValid) return anyValid;
-
   return clean[0] || "0-0000";
 }
 
@@ -828,7 +755,6 @@ function buildPLMap(plText){
   const iCode=findCol(headers,["Variante"]);
   const iQty=findCol(headers,["Physical Quantity","PhysicalQuantity","Cantidad"]);
   if(iCode<0||iQty<0) throw new Error("PL: No encontré columnas (Variante, Physical Quantity).");
-
   const map=new Map();
   for(const r of rows){
     const code=(r[iCode]||"").trim(); if(!code) continue;
@@ -838,43 +764,37 @@ function buildPLMap(plText){
   }
   return map;
 }
-
 function buildReservedMap(resText){
   const {headers,rows}=parseTSV(resText);
   const iCode=findCol(headers,["Codigo Producto","Código Producto","Codigo","Código"]);
   const iDesc=findCol(headers,["Descripcion","Descripción","Producto","Description"]);
   const iRes=findCol(headers,["Reserved","Reservado"]);
-  const iCaja=findCol(headers,["Caja"]); // <-- Ubicación PL aquí
+  const iCaja=findCol(headers,["Caja"]);
   if(iCode<0||iRes<0) throw new Error("Reservado: No encontré columnas (Código Producto, Reserved).");
-
   const map=new Map();
   for(const r of rows){
     const code=(r[iCode]||"").trim(); if(!code) continue;
     const desc=(iDesc>=0?(r[iDesc]||"").trim():"");
     const reserved=toInt(r[iRes]);
     const caja=(iCaja>=0?(r[iCaja]||"").trim():"");
-
     if(!map.has(code)) map.set(code,{desc,reserved:0, plLocs:[]});
     const it=map.get(code);
     it.reserved+=reserved;
     if(!it.desc && desc) it.desc=desc;
     if(caja) it.plLocs.push(caja);
   }
-
   for(const it of map.values()){
-    it.plLoc = choosePLLocation(it.plLocs);     // <-- PL location desde Reservado (Caja)
+    it.plLoc = choosePLLocation(it.plLocs);
     it.altaRotacion = isGoodPLLocation(it.plLoc);
   }
   return map;
 }
-
 function buildBulkMap(bulkText){
   const {headers,rows}=parseTSV(bulkText);
   const iCode=findCol(headers,["Variante"]);
   const iLoc=findCol(headers,["Ubicacion","Ubicación","Location","Caja"]);
   const iQty=findCol(headers,["Physical Quantity","PhysicalQuantity","Cantidad"]);
   if(iCode<0||iLoc<0||iQty<0) throw new Error("Bulk: No encontré columnas (Variante, Ubicación, Physical Quantity).");
-
   const map=new Map();
   for(const r of rows){
     const code=(r[iCode]||"").trim(); if(!code) continue;
@@ -884,12 +804,10 @@ function buildBulkMap(bulkText){
     if(!map.has(code)) map.set(code,[]);
     map.get(code).push({loc,qty});
   }
-
   for(const arr of map.values()){
     arr.sort((a,b)=>{
       const aAir=isAirCW(a.loc), bAir=isAirCW(b.loc);
       if(aAir!==bAir) return aAir?1:-1;
-
       const aa=bulkAisle(a.loc), bb=bulkAisle(b.loc);
       if(aa!==null && bb!==null){
         if(aa!==bb) return aa-bb;
@@ -899,7 +817,6 @@ function buildBulkMap(bulkText){
       }
       if(aa!==null && bb===null) return -1;
       if(aa===null && bb!==null) return 1;
-
       const ra=specialRank(a.loc), rb=specialRank(b.loc);
       if(ra!==rb) return ra-rb;
       return a.loc.localeCompare(b.loc);
@@ -914,32 +831,24 @@ function buildMoves(plMap,resMap,bulkMap){
   for(const [code,r] of resMap.entries()){
     const reserved=r.reserved;
     if(reserved<=0) continue;
-
     const pl=plMap.get(code);
     const stockPL=pl?pl.stock:0;
-
     const plLoc = r.plLoc || "0-0000";
     const alta = !!r.altaRotacion;
-
     let need=Math.max(0,reserved-stockPL);
     if(need<=0) continue;
-
     const bulkList=bulkMap.get(code)||[];
     let remaining=need;
-
     for(const slot of bulkList){
       if(remaining<=0) break;
       const take=Math.min(remaining,slot.qty);
       if(take<=0) continue;
-
       const flags=[];
       if(!pl) flags.push("NO EN PL");
       if(alta) flags.push("ALTA ROTACION");
-
       moves.push({code,desc:r.desc||"",bulkLoc:slot.loc,needQty:take,plLoc,flags});
       remaining-=take;
     }
-
     if(remaining>0){
       const flags=[];
       if(!pl) flags.push("NO EN PL");
@@ -950,7 +859,6 @@ function buildMoves(plMap,resMap,bulkMap){
   }
   return moves;
 }
-
 function compareBulkForReport(aLoc,bLoc){
   const aAir=isAirCW(aLoc), bAir=isAirCW(bLoc);
   if(aAir || bAir){
@@ -967,7 +875,6 @@ function compareBulkForReport(aLoc,bLoc){
   if(aa===null && bb!==null) return 1;
   return aLoc.localeCompare(bLoc);
 }
-
 function splitPanels(moves){
   const p1=[], p2=[], p3=[];
   for(const m of moves){
@@ -976,15 +883,10 @@ function splitPanels(moves){
     if(lvl===1) p1.push(m);
     else p2.push(m);
   }
-
   const sorter=(a,b)=>compareBulkForReport(a.bulkLoc,b.bulkLoc)||compareCodeAsc(a.code,b.code);
-  p1.sort(sorter);
-  p2.sort(sorter);
-  p3.sort(sorter);
-
+  p1.sort(sorter); p2.sort(sorter); p3.sort(sorter);
   return {p1,p2,p3};
 }
-
 function pillHTML(flags){
   if(!flags||!flags.length) return "";
   return flags.map(f=>{
@@ -1024,14 +926,12 @@ function renderReport(tbody,list){
     `);
   }
 }
-
 function renderPending(tbody, list){
   tbody.innerHTML = "";
   for(const m of list){
     const id = idKey(m.code, m.bulkLoc);
     const current = STATE.qtyById.get(id) || 0;
     if(current > 0) continue;
-
     tbody.insertAdjacentHTML("beforeend", `
       <tr>
         <td class="mono">${escapeHTML(m.code)}</td>
@@ -1047,7 +947,6 @@ function renderPending(tbody, list){
     `);
   }
 }
-
 function getPendingCount(list){
   let c=0;
   for(const m of list){
@@ -1065,27 +964,22 @@ function sumDone(list){
     return s + (Number.isFinite(q)?q:0);
   },0);
 }
-
 function setPanelKPI(panelKey,list){
   document.getElementById(panelKey+"Lines").textContent=String(list.length);
   document.getElementById(panelKey+"Need").textContent=String(sumNeed(list));
   document.getElementById(panelKey+"Done").textContent=String(sumDone(list));
-
   const pending=getPendingCount(list);
   document.getElementById(panelKey+"Pending").textContent=String(pending);
-
   const statusEl=document.getElementById(panelKey+"Status");
   if(list.length===0) statusEl.innerHTML=`<span class="pill ok">SIN MOVIMIENTOS</span>`;
   else if(pending===0) statusEl.innerHTML=`<span class="pill ok">PANEL LISTO</span>`;
   else statusEl.innerHTML=`<span class="pill bad">FALTAN ${pending}</span>`;
 }
-
 function updatePendingTabLabels(){
   document.querySelector('[data-sub="p1-pending"]').textContent=`Pendientes (${getPendingCount(STATE.p1)})`;
   document.querySelector('[data-sub="p2-pending"]').textContent=`Pendientes (${getPendingCount(STATE.p2)})`;
   document.querySelector('[data-sub="p3-pending"]').textContent=`Pendientes (${getPendingCount(STATE.p3)})`;
 }
-
 function updateDayButtons(){
   const p1Complete=(STATE.p1.length===0)||(getPendingCount(STATE.p1)===0);
   const p2Complete=(STATE.p2.length===0)||(getPendingCount(STATE.p2)===0);
@@ -1093,33 +987,21 @@ function updateDayButtons(){
   document.getElementById("downloadDay").disabled = !(p1Complete && p2Complete && p3Complete);
   document.getElementById("printDay").disabled = !(p1Complete && p2Complete && p3Complete);
 }
-
 function refreshAllTables(){
   renderReport(document.getElementById("p1ReportBody"),STATE.p1);
   renderReport(document.getElementById("p2ReportBody"),STATE.p2);
   renderReport(document.getElementById("p3ReportBody"),STATE.p3);
-
   renderPending(document.getElementById("p1PendingBody"),STATE.p1);
   renderPending(document.getElementById("p2PendingBody"),STATE.p2);
   renderPending(document.getElementById("p3PendingBody"),STATE.p3);
-
   setPanelKPI("p1",STATE.p1);
   setPanelKPI("p2",STATE.p2);
   setPanelKPI("p3",STATE.p3);
-
   updatePendingTabLabels();
   updateDayButtons();
-
-  renderBatchSelect("p1");
-  renderBatchSelect("p2");
-  renderBatchSelect("p3");
-
-  renderSelectedBatch("p1");
-  renderSelectedBatch("p2");
-  renderSelectedBatch("p3");
+  renderBatchSelect("p1"); renderBatchSelect("p2"); renderBatchSelect("p3");
+  renderSelectedBatch("p1"); renderSelectedBatch("p2"); renderSelectedBatch("p3");
 }
-
-/* Batches (lotes) */
 function nowLabel(){
   const d=new Date();
   const yyyy=d.getFullYear();
@@ -1130,7 +1012,6 @@ function nowLabel(){
   const ss=String(d.getSeconds()).padStart(2,"0");
   return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
 }
-
 function createBatchFromPendingTbody(panel, tbody){
   const inputs=[...tbody.querySelectorAll('input[data-role="qty"][data-id]')];
   const rows=[];
@@ -1138,76 +1019,53 @@ function createBatchFromPendingTbody(panel, tbody){
     const id=inp.getAttribute("data-id");
     const q=Number(STATE.qtyById.get(id)||0);
     if(!(q>0)) continue;
-
     const m=STATE.moveById.get(id);
     if(!m) continue;
-
     const plLoc = (STATE.plLocByCode.get(m.code) || m.plLoc || "0-0000");
-
-    rows.push({
-      code:m.code,
-      bulkLoc:m.bulkLoc,
-      plLoc,
-      qty:q
-    });
+    rows.push({ code:m.code, bulkLoc:m.bulkLoc, plLoc, qty:q });
   }
-
   rows.sort((a,b)=>compareCodeAsc(a.code,b.code)||a.bulkLoc.localeCompare(b.bulkLoc));
   if(rows.length===0) return null;
-
   const batchId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const label = `Lote ${STATE.batchesByPanel[panel].length+1} · ${nowLabel()}`;
   const batch={ id:batchId, label, createdAt: Date.now(), panel, rows };
-
   STATE.batchesByPanel[panel].push(batch);
   STATE.selectedBatchIdByPanel[panel]=batchId;
-
   return batch;
 }
-
 function renderBatchSelect(panel){
   const sel = document.getElementById(panel+"BatchSelect");
   if(!sel) return;
-
   const batches = STATE.batchesByPanel[panel];
   sel.innerHTML="";
-
   if(batches.length===0){
     const opt=document.createElement("option");
-    opt.value="";
-    opt.textContent="Sin lotes aún";
+    opt.value=""; opt.textContent="Sin lotes aún";
     sel.appendChild(opt);
     sel.disabled=true;
     return;
   }
-
   sel.disabled=false;
   for(const b of batches){
     const opt=document.createElement("option");
-    opt.value=b.id;
-    opt.textContent=b.label;
+    opt.value=b.id; opt.textContent=b.label;
     sel.appendChild(opt);
   }
-
   const want = STATE.selectedBatchIdByPanel[panel] || batches[batches.length-1].id;
   sel.value = want;
 }
-
 function renderSelectedBatch(panel){
   const tbodyId = panel==="p1"?"p1PLFmtBody":panel==="p2"?"p2PLFmtBody":"p3PLFmtBody";
   const tbody = document.getElementById(tbodyId);
   if(!tbody) return;
-
   const batches = STATE.batchesByPanel[panel];
   if(batches.length===0){
     tbody.innerHTML = `<tr><td colspan="5" style="color:#475569;">Aún no hay lotes. Usa Pendientes → Copiar (crea lote).</td></tr>`;
     return;
   }
-
   const id = STATE.selectedBatchIdByPanel[panel] || batches[batches.length-1].id;
   const batch = batches.find(b=>b.id===id) || batches[batches.length-1];
   STATE.selectedBatchIdByPanel[panel]=batch.id;
-
   tbody.innerHTML="";
   for(const r of batch.rows){
     tbody.insertAdjacentHTML("beforeend",`
@@ -1221,7 +1079,6 @@ function renderSelectedBatch(panel){
     `);
   }
 }
-
 function buildTSVFromBatch(panel){
   const batches = STATE.batchesByPanel[panel];
   if(batches.length===0) return "";
@@ -1244,16 +1101,10 @@ function setActiveSub(panel,sub){
   const root=document.getElementById(panel==="p1"?"panel-p1":panel==="p2"?"panel-p2":"panel-p3");
   root.querySelectorAll(".subtab").forEach(s=>s.classList.toggle("active",s.dataset.sub===sub));
   root.querySelectorAll("[id^='"+panel+"-']").forEach(view=>view.classList.toggle("hidden",view.id!==sub));
-
   if(sub===panel+"-plfmt"){
     renderBatchSelect(panel);
     renderSelectedBatch(panel);
   }
-}
-function printTarget(targetId){
-  document.body.setAttribute("data-print-target",targetId);
-  window.print();
-  document.body.removeAttribute("data-print-target");
 }
 
 /* Process */
@@ -1261,7 +1112,6 @@ function process(){
   const plText=document.getElementById("plInput").value;
   const resText=document.getElementById("resInput").value;
   const bulkText=document.getElementById("bulkInput").value;
-
   let plMap,resMap,bulkMap,moves;
   try{
     plMap=buildPLMap(plText);
@@ -1294,113 +1144,9 @@ function process(){
   setActiveSub("p1","p1-report");
 }
 
-/* Day report */
-function buildDayRows(){
-  const out=[];
-  for(const panel of ["p1","p2","p3"]){
-    for(const b of STATE.batchesByPanel[panel]){
-      for(const r of b.rows){
-        out.push({ ...r, panel, lote: b.label });
-      }
-    }
-  }
-  out.sort((a,b)=>compareCodeAsc(a.code,b.code)||a.bulkLoc.localeCompare(b.bulkLoc));
-  return out;
-}
-function downloadDayHTML(){
-  const rows=buildDayRows();
-  const now=new Date();
-  const yyyy=now.getFullYear();
-  const mm=String(now.getMonth()+1).padStart(2,"0");
-  const dd=String(now.getDate()).padStart(2,"0");
-  const dateStr=`${yyyy}-${mm}-${dd}`;
-
-  const tableRows=rows.map(r=>`
-    <tr>
-      <td style="font-family: ui-monospace, monospace;">${escapeHTML(r.code)}</td>
-      <td style="font-family: ui-monospace, monospace;">${escapeHTML(r.bulkLoc)}</td>
-      <td style="font-family: ui-monospace, monospace;">${escapeHTML(r.plLoc)}</td>
-      <td style="font-family: ui-monospace, monospace;">${escapeHTML(String(r.qty))}</td>
-      <td>${escapeHTML(r.panel.toUpperCase())}</td>
-      <td>${escapeHTML(r.lote)}</td>
-    </tr>`).join("");
-
-  const html=`<!doctype html><html lang="es"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Trabajo del día ${dateStr}</title>
-<style>
-body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;color:#0F172A;margin:20px;}
-.capsule{display:inline-flex;padding:7px 12px;border-radius:999px;border:1px solid rgba(73,198,180,.35);
-background:rgba(163,232,231,.35);color:#1B6562;font-weight:900;letter-spacing:.04em;text-transform:uppercase;font-size:12px;}
-h1{margin:12px 0 6px;color:#49C6B4;font-size:22px;}
-.sub{color:#475569;font-size:12px;margin-bottom:12px;}
-table{width:100%;border-collapse:collapse;font-size:12px;}
-th,td{padding:8px 7px;border-bottom:2px solid #bfeee5;text-align:left;}
-th{text-transform:uppercase;letter-spacing:.06em;color:#475569;font-size:11px;border-bottom:2px solid #9adfd4;}
-@media print{body{margin:0;}}
-</style></head><body>
-<div class="capsule">ORIFLAME · Operaciones</div>
-<h1>Trabajo del día</h1>
-<div class="sub">${dateStr}</div>
-<table><thead><tr>
-<th style="width:90px;">Código</th>
-<th style="width:200px;">Posición Bulk</th>
-<th style="width:150px;">Posición PL</th>
-<th style="width:90px;">Qty</th>
-<th style="width:70px;">Panel</th>
-<th style="width:240px;">Lote</th>
-</tr></thead><tbody>${tableRows}</tbody></table>
-</body></html>`;
-
-  const blob=new Blob([html],{type:"text/html;charset=utf-8"});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement("a");
-  a.href=url; a.download=`Trabajo_del_dia_${dateStr}.html`;
-  document.body.appendChild(a); a.click(); a.remove();
-  URL.revokeObjectURL(url);
-}
-function printDayReport(){
-  const rows=buildDayRows();
-  const now=new Date();
-  const yyyy=now.getFullYear();
-  const mm=String(now.getMonth()+1).padStart(2,"0");
-  const dd=String(now.getDate()).padStart(2,"0");
-  const dateStr=`${yyyy}-${mm}-${dd}`;
-  document.getElementById("dayDate").textContent=dateStr;
-
-  document.getElementById("dayBody").innerHTML=rows.map(r=>`
-    <tr>
-      <td class="mono">${escapeHTML(r.code)}</td>
-      <td class="mono">${escapeHTML(r.bulkLoc)}</td>
-      <td class="mono">${escapeHTML(r.plLoc)}</td>
-      <td class="mono">${escapeHTML(String(r.qty))}</td>
-      <td>${escapeHTML(r.panel.toUpperCase())}</td>
-      <td>${escapeHTML(r.lote)}</td>
-    </tr>`).join("");
-  printTarget("day-report");
-}
-
-/* Events */
+/* Events base */
 document.getElementById("process").addEventListener("click",process);
-document.getElementById("clearAll").addEventListener("click", async ()=>{
-  const ok = confirm("¿Seguro que deseas LIMPIAR LA HOJA? Esto se borrará para TODOS.");
-  if(!ok) return;
-
-  if (typeof window.limpiarHoja === "function") {
-    try { await window.limpiarHoja(); return; } catch(e) { console.warn("Fallo limpiarHoja() en Firebase, aplico limpieza local.", e); }
-  }
-
-  document.getElementById("plInput").value="";
-  document.getElementById("resInput").value="";
-  document.getElementById("bulkInput").value="";
-
-  STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
-  STATE.qtyById = new Map();
-  STATE.batchesByPanel={p1:[],p2:[],p3:[]};
-  STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
-  STATE.moveById = new Map();
-  refreshAllTables();
-});
+document.getElementById("clearAll").addEventListener("click", async ()=>{ if(typeof window.limpiarHoja==="function"){ await window.limpiarHoja(); } });
 
 document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>setActivePanel(t.dataset.panel)));
 document.querySelectorAll("#panel-p1 .subtab").forEach(s=>s.addEventListener("click",()=>setActiveSub("p1",s.dataset.sub)));
@@ -1412,83 +1158,45 @@ document.addEventListener("input",(ev)=>{
   if(el && el.matches('input[data-role="qty"]')){
     const id=el.getAttribute("data-id");
     if(!id) return;
-
     const v=toInt(el.value);
     if(v>0) STATE.qtyById.set(id,v);
     else STATE.qtyById.delete(id);
-
-    setPanelKPI("p1",STATE.p1);
-    setPanelKPI("p2",STATE.p2);
-    setPanelKPI("p3",STATE.p3);
-    updatePendingTabLabels();
-    updateDayButtons();
+    setPanelKPI("p1",STATE.p1); setPanelKPI("p2",STATE.p2); setPanelKPI("p3",STATE.p3);
+    updatePendingTabLabels(); updateDayButtons();
   }
 });
 
 async function handleCopyPending(panel){
   const tbody = document.getElementById(panel+"PendingBody");
   const out = document.getElementById(panel+"CopyPendingText");
-
   const batch = createBatchFromPendingTbody(panel, tbody);
   const tsv = batch ? batch.rows.map(r=>[r.code,r.bulkLoc,"PL",r.qty].join("\t")).join("\n") : "";
   out.value = tsv;
-
   await copyText(tsv);
-
   renderPending(tbody, panel==="p1"?STATE.p1:panel==="p2"?STATE.p2:STATE.p3);
-
-  setPanelKPI("p1",STATE.p1);
-  setPanelKPI("p2",STATE.p2);
-  setPanelKPI("p3",STATE.p3);
-  updatePendingTabLabels();
-  updateDayButtons();
-
-  renderBatchSelect(panel);
-  renderSelectedBatch(panel);
+  setPanelKPI("p1",STATE.p1); setPanelKPI("p2",STATE.p2); setPanelKPI("p3",STATE.p3);
+  updatePendingTabLabels(); updateDayButtons();
+  renderBatchSelect(panel); renderSelectedBatch(panel);
 }
-
 document.getElementById("p1CopyPending").addEventListener("click",()=>handleCopyPending("p1"));
 document.getElementById("p2CopyPending").addEventListener("click",()=>handleCopyPending("p2"));
 document.getElementById("p3CopyPending").addEventListener("click",()=>handleCopyPending("p3"));
 
-document.getElementById("p1BatchSelect").addEventListener("change",(e)=>{
-  const id=e.target.value;
-  STATE.selectedBatchIdByPanel.p1 = id || null;
-  renderSelectedBatch("p1");
-});
-document.getElementById("p2BatchSelect").addEventListener("change",(e)=>{
-  const id=e.target.value;
-  STATE.selectedBatchIdByPanel.p2 = id || null;
-  renderSelectedBatch("p2");
-});
-document.getElementById("p3BatchSelect").addEventListener("change",(e)=>{
-  const id=e.target.value;
-  STATE.selectedBatchIdByPanel.p3 = id || null;
-  renderSelectedBatch("p3");
-});
+document.getElementById("p1BatchSelect").addEventListener("change",(e)=>{ STATE.selectedBatchIdByPanel.p1 = e.target.value || null; renderSelectedBatch("p1"); });
+document.getElementById("p2BatchSelect").addEventListener("change",(e)=>{ STATE.selectedBatchIdByPanel.p2 = e.target.value || null; renderSelectedBatch("p2"); });
+document.getElementById("p3BatchSelect").addEventListener("change",(e)=>{ STATE.selectedBatchIdByPanel.p3 = e.target.value || null; renderSelectedBatch("p3"); });
 
 document.getElementById("p1CopyBatch").addEventListener("click",async ()=>{ await copyText(buildTSVFromBatch("p1")); });
 document.getElementById("p2CopyBatch").addEventListener("click",async ()=>{ await copyText(buildTSVFromBatch("p2")); });
 document.getElementById("p3CopyBatch").addEventListener("click",async ()=>{ await copyText(buildTSVFromBatch("p3")); });
-
-document.querySelectorAll('button[data-print]').forEach(b=>{
-  b.addEventListener("click",()=>printTarget(b.getAttribute("data-print")));
-});
-document.getElementById("downloadDay").addEventListener("click",downloadDayHTML);
-document.getElementById("printDay").addEventListener("click",printDayReport);
 </script>
 
 <script type="module">
-  // ===== Firebase (Firestore) Sync =====
-  // Objetivo:
-  // 1) Que al recargar NO se pierda la información (se restaura desde NUBE y también desde localStorage).
-  // 2) Que NADIE le "pise" a otro mientras escribe: si llega data remota y tú estás tipeando, NO se aplica automáticamente.
-  //    Se muestra un botón "Recargar nube" para aplicar cuando tú decidas.
-  // 3) "Limpiar hoja" borra TODO para TODOS.
-
+  // ===== Persistencia TOTAL (Nube + Local) SIN pisarse =====
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
   import {
-    getFirestore, doc, onSnapshot, setDoc, getDoc, deleteDoc, serverTimestamp
+    getFirestore, doc, collection, getDocs, setDoc, deleteDoc,
+    onSnapshot, serverTimestamp, writeBatch
   } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
   const firebaseConfig = {
@@ -1500,18 +1208,17 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     appId: "1:1052710112933:web:ed342948f4fb5eb21f074c"
   };
 
-  const ROOM_ID = "global"; // ✅ un solo HTML, una sola "sala" para todos
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
 
-  // Docs
-  const hojaRef = doc(db, "opsHubRooms", ROOM_ID, "appState", "hoja");                 // estado operativo (qty/lotes/tabs)
-  const metaRef = doc(db, "opsHubRooms", ROOM_ID, "appState", "texts_meta");           // meta de textos (conteo + updatedAt)
-  // Partes de texto (para evitar el límite ~1MB por doc)
-  // ids: pl_0..pl_n, res_0..res_n, bulk_0..bulk_n
-  const partRef = (name, idx) => doc(db, "opsHubRooms", ROOM_ID, "texts", `${name}_${idx}`);
+  // Sala global (1 link, todos)
+  const ROOM_ID = "global";
+  const base = doc(db, "opsHubRooms", ROOM_ID);
 
-  // Identidad del cliente (evita eco)
+  const hojaRef   = doc(db, "opsHubRooms", ROOM_ID, "state", "hoja");       // estado operativo
+  const textsMeta = doc(db, "opsHubRooms", ROOM_ID, "texts", "meta");       // meta + chunks info
+  const textsChunksCol = collection(db, "opsHubRooms", ROOM_ID, "textsChunks");
+
   const CLIENT_ID = (() => {
     try {
       const k = "opsHubClientId";
@@ -1525,7 +1232,7 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     }
   })();
 
-  // ===== UI Helpers =====
+  // ===== UI badge
   function setSyncBadge(msg, ok=true){
     const el=document.getElementById("syncBadge");
     if(!el) return;
@@ -1535,452 +1242,390 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     el.style.color = ok ? "#0f5132" : "#842029";
   }
 
-  function ensureReloadCloudButton(){
-    let btn = document.getElementById("btnReloadCloud");
-    if (btn) return btn;
-    const badge = document.getElementById("syncBadge");
-    if(!badge) return null;
+  // ===== Local storage (fallback inmediato)
+  const LS_KEY = "opsHub_global_snapshot_v1";
 
-    btn = document.createElement("button");
-    btn.id = "btnReloadCloud";
-    btn.textContent = "↻ Recargar nube";
-    btn.className = "btn small";
-    btn.style.marginLeft = "10px";
-    btn.style.display = "none";
-
-    badge.insertAdjacentElement("afterend", btn);
-    return btn;
+  function snapshotToPlainObjectMap(m){
+    const obj={}; for(const [k,v] of m.entries()) obj[k]=v; return obj;
   }
-
-  // ===== State sync helpers =====
-  function snapshotToPlainObjectMap(m) {
-    const obj = {};
-    for (const [k,v] of m.entries()) obj[k] = v;
-    return obj;
-  }
-  function objectToMap(obj) {
-    const m = new Map();
-    if (!obj || typeof obj !== "object") return m;
-    for (const k of Object.keys(obj)) {
-      const v = obj[k];
-      const n = parseInt(v, 10);
-      if (Number.isFinite(n) && n > 0) m.set(k, n);
+  function objectToMap(obj){
+    const m=new Map();
+    if(!obj||typeof obj!=="object") return m;
+    for(const k of Object.keys(obj)){
+      const n=parseInt(obj[k],10);
+      if(Number.isFinite(n)&&n>0) m.set(k,n);
     }
     return m;
   }
 
-  // ===== Text chunking =====
-  const MAX_CHARS_PER_PART = 180000; // margen para no rozar límites (seguro)
-  function chunkString(str, maxChars){
-    const s = (str ?? "").toString();
-    if (!s) return [""];
-    const out = [];
-    for (let i=0; i<s.length; i+=maxChars){
-      out.push(s.slice(i, i+maxChars));
-    }
-    return out;
-  }
-
-  // ===== Local typing guard =====
-  let isApplyingRemote = false;
-  let lastLocalWriteState = 0;
-  let lastLocalWriteTexts = 0;
-
-  let textDirty = false;
-  let lastTextInputAt = 0;
-  let pendingRemoteTexts = false;
-  let pendingRemoteMeta = null;
-
-  function markTextDirty(){
-    textDirty = true;
-    lastTextInputAt = Date.now();
-  }
-  function isUserTypingNow(){
-    return textDirty && (Date.now() - lastTextInputAt < 1800); // si escribió hace <1.8s, consideramos "escribiendo"
-  }
-
-  // ===== LocalStorage (para que recargar nunca pierda) =====
-  const LS_KEY = `opsHub_${ROOM_ID}_texts_v1`;
-  function saveLocalTexts(){
+  function readLocal(){
     try{
-      const payload = {
-        t: Date.now(),
-        pl: document.getElementById("plInput")?.value || "",
-        res: document.getElementById("resInput")?.value || "",
-        bulk: document.getElementById("bulkInput")?.value || ""
-      };
-      localStorage.setItem(LS_KEY, JSON.stringify(payload));
-    }catch(e){}
+      const raw=localStorage.getItem(LS_KEY);
+      if(!raw) return null;
+      return JSON.parse(raw);
+    }catch(e){ return null; }
   }
-  function loadLocalTexts(){
-    try{
-      const raw = localStorage.getItem(LS_KEY);
-      if(!raw) return false;
-      const payload = JSON.parse(raw);
-      if(!payload) return false;
-
-      const plEl = document.getElementById("plInput");
-      const resEl = document.getElementById("resInput");
-      const bulkEl = document.getElementById("bulkInput");
-
-      if(plEl && typeof payload.pl === "string") plEl.value = payload.pl;
-      if(resEl && typeof payload.res === "string") resEl.value = payload.res;
-      if(bulkEl && typeof payload.bulk === "string") bulkEl.value = payload.bulk;
-
-      return true;
-    }catch(e){ return false; }
+  function writeLocal(payload){
+    try{ localStorage.setItem(LS_KEY, JSON.stringify(payload)); }catch(e){}
   }
 
-  // ===== Save texts to cloud (chunked) =====
-  let saveTextsTimer = null;
-
-  async function writeTextParts(name, text, oldCount){
-    const parts = chunkString(text, MAX_CHARS_PER_PART);
-    const count = parts.length;
-
-    // write new parts
-    const now = Date.now();
-    const writes = [];
-    for(let i=0;i<count;i++){
-      writes.push(setDoc(partRef(name,i), {
-        i,
-        t: parts[i],
-        clientId: CLIENT_ID,
-        clientUpdatedAt: now,
-        updatedAt: serverTimestamp()
-      }, { merge: true }));
-    }
-
-    // delete extra old parts if new count smaller
-    if (typeof oldCount === "number" && oldCount > count){
-      for(let i=count;i<oldCount;i++){
-        writes.push(deleteDoc(partRef(name,i)));
-      }
-    }
-
-    await Promise.all(writes);
-    return count;
-  }
-
-  async function saveTextsToCloud(){
-    if (isApplyingRemote) return;
-
-    setSyncBadge("Sync: guardando…");
-    const plText = document.getElementById("plInput")?.value || "";
-    const resText = document.getElementById("resInput")?.value || "";
-    const bulkText = document.getElementById("bulkInput")?.value || "";
-
-    // Siempre guardar local
-    saveLocalTexts();
-
-    try{
-      // lee meta actual para saber cuántas partes borrar si redujo
-      const metaSnap = await getDoc(metaRef);
-      const meta = metaSnap.exists() ? (metaSnap.data()||{}) : {};
-      const old = meta.counts || {};
-
-      const now = Date.now();
-      lastLocalWriteTexts = now;
-
-      const [cPl, cRes, cBulk] = await Promise.all([
-        writeTextParts("pl", plText, old.pl),
-        writeTextParts("res", resText, old.res),
-        writeTextParts("bulk", bulkText, old.bulk)
-      ]);
-
-      await setDoc(metaRef, {
-        version: 5,
-        clientId: CLIENT_ID,
-        clientUpdatedAt: now,
-        counts: { pl: cPl, res: cRes, bulk: cBulk },
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-
-      textDirty = false;
-      pendingRemoteTexts = false;
-      pendingRemoteMeta = null;
-
-      const btn = ensureReloadCloudButton();
-      if(btn) btn.style.display = "none";
-
-      setSyncBadge("Sync: OK (guardado)", true);
-    }catch(e){
-      console.warn("No se pudo guardar textos:", e);
-      setSyncBadge("Sync: ERROR (textos, ver consola)", false);
-    }
-  }
-
-  function scheduleSaveTexts(){
-    if (isApplyingRemote) return;
-    markTextDirty();
-    clearTimeout(saveTextsTimer);
-    saveTextsTimer = setTimeout(saveTextsToCloud, 900);
-  }
-
-  // ===== Load texts from cloud (chunked) =====
-  async function readTextParts(name, count){
-    if(!count || count<=0) return "";
-    const reads = [];
-    for(let i=0;i<count;i++){
-      reads.push(getDoc(partRef(name,i)));
-    }
-    const snaps = await Promise.all(reads);
-    return snaps.map(s => (s.exists() ? ((s.data()||{}).t || "") : "")).join("");
-  }
-
-  async function applyCloudTexts(meta){
-    if(!meta || !meta.counts) return;
-
-    isApplyingRemote = true;
-    setSyncBadge("Sync: cargando…");
-
-    try{
-      const counts = meta.counts || {};
-      const [plText, resText, bulkText] = await Promise.all([
-        readTextParts("pl", counts.pl),
-        readTextParts("res", counts.res),
-        readTextParts("bulk", counts.bulk)
-      ]);
-
-      // aplica en UI
-      const plEl = document.getElementById("plInput");
-      const resEl = document.getElementById("resInput");
-      const bulkEl = document.getElementById("bulkInput");
-
-      if(plEl) plEl.value = plText || "";
-      if(resEl) resEl.value = resText || "";
-      if(bulkEl) bulkEl.value = bulkText || "";
-
-      // guarda local para que el siguiente refresh sea inmediato
-      saveLocalTexts();
-
-      // recalcula si hay data
-      const hasAny = (plEl?.value.trim() || resEl?.value.trim() || bulkEl?.value.trim());
-      if (hasAny) {
-        try { process(); } catch(e) {}
-      } else {
-        // reset visual (como tu lógica original)
-        STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
-        STATE.qtyById = new Map();
-        STATE.batchesByPanel={p1:[],p2:[],p3:[]};
-        STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
-        STATE.moveById = new Map();
-        refreshAllTables();
-        setActivePanel("p1");
-        setActiveSub("p1","p1-report");
-      }
-
-      textDirty = false;
-      pendingRemoteTexts = false;
-      pendingRemoteMeta = null;
-
-      const btn = ensureReloadCloudButton();
-      if(btn) btn.style.display = "none";
-
-      setSyncBadge("Sync: OK (cargado)", true);
-    }catch(e){
-      console.warn("No se pudo cargar textos:", e);
-      setSyncBadge("Sync: ERROR (carga textos)", false);
-    } finally {
-      isApplyingRemote = false;
-    }
-  }
-
-  // ===== Limpieza global (borra textos + estado para TODOS) =====
-  window.limpiarHoja = async function () {
-    const ok = confirm("¿Seguro que deseas LIMPIAR LA HOJA GLOBAL? Esto se borrará para TODOS.");
-    if(!ok) return;
-
-    const now = Date.now();
-    lastLocalWriteState = now;
-    lastLocalWriteTexts = now;
-
-    setSyncBadge("Sync: limpiando…");
-
-    try{
-      // Borra meta y partes (por conteos actuales)
-      const metaSnap = await getDoc(metaRef);
-      const meta = metaSnap.exists() ? (metaSnap.data()||{}) : {};
-      const counts = (meta.counts||{});
-      const dels = [];
-
-      for(const [name, cnt] of Object.entries({pl:counts.pl||0, res:counts.res||0, bulk:counts.bulk||0})){
-        for(let i=0;i<cnt;i++){
-          dels.push(deleteDoc(partRef(name,i)));
-        }
-      }
-      dels.push(deleteDoc(metaRef));
-      await Promise.all(dels);
-
-      // Limpia estado operativo
-      await setDoc(hojaRef, {
-        version: 5,
-        clientId: CLIENT_ID,
-        clientUpdatedAt: now,
-        qtyById: {},
-        batchesByPanel: {p1:[],p2:[],p3:[]},
-        selectedBatchIdByPanel: {p1:null,p2:null,p3:null},
-        activePanel: "p1",
-        activeSubByPanel: {p1:"p1-report", p2:"p2-report", p3:"p3-report"},
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-
-      // Limpia local UI
-      isApplyingRemote = true;
-      document.getElementById("plInput").value = "";
-      document.getElementById("resInput").value = "";
-      document.getElementById("bulkInput").value = "";
-      saveLocalTexts();
-
-      STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
-      STATE.qtyById = new Map();
-      STATE.batchesByPanel={p1:[],p2:[],p3:[]};
-      STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
-      STATE.moveById = new Map();
-      refreshAllTables();
-      setActivePanel("p1");
-      setActiveSub("p1","p1-report");
-      isApplyingRemote = false;
-
-      const btn = ensureReloadCloudButton();
-      if(btn) btn.style.display = "none";
-
-      setSyncBadge("Sync: OK (limpio)", true);
-    }catch(e){
-      console.warn("No se pudo limpiar:", e);
-      setSyncBadge("Sync: ERROR (limpieza)", false);
-      isApplyingRemote = false;
-    }
-  };
-
-  // ===== Listener: META de textos =====
-  onSnapshot(metaRef, async (snap) => {
-    if(!snap.exists()) return;
-    const meta = snap.data() || {};
-
-    // ignora eco propio
-    if (meta.clientId === CLIENT_ID && meta.clientUpdatedAt && meta.clientUpdatedAt === lastLocalWriteTexts) return;
-
-    // si el usuario está escribiendo, NO pisar: marcar pendiente
-    if (isUserTypingNow()){
-      pendingRemoteTexts = true;
-      pendingRemoteMeta = meta;
-
-      const btn = ensureReloadCloudButton();
-      if(btn){
-        btn.style.display = "inline-block";
-        btn.onclick = async () => {
-          pendingRemoteTexts = false;
-          const m = pendingRemoteMeta;
-          pendingRemoteMeta = null;
-          await applyCloudTexts(m);
-        };
-      }
-
-      setSyncBadge("Sync: hay nueva data en nube (no se aplicó)", false);
-      return;
-    }
-
-    // si no está escribiendo, aplicar directo
-    await applyCloudTexts(meta);
-  });
-
-  // ===== Listener: Estado operativo (qty, lotes, pestañas) =====
-  onSnapshot(hojaRef, (snap) => {
-    if(!snap.exists()) return;
-    const data = snap.data() || {};
-
-    // ignora eco propio
-    if (data.clientId === CLIENT_ID && data.clientUpdatedAt && data.clientUpdatedAt === lastLocalWriteState) return;
-
-    isApplyingRemote = true;
-
-    STATE.qtyById = objectToMap(data.qtyById);
-    if (data.batchesByPanel) STATE.batchesByPanel = data.batchesByPanel;
-    if (data.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = data.selectedBatchIdByPanel;
-    if (data.activeSubByPanel) STATE.activeSubByPanel = data.activeSubByPanel;
-
-    refreshAllTables();
-
-    const panel = data.activePanel || "p1";
-    setActivePanel(panel);
-    setActiveSub(panel, (STATE.activeSubByPanel && STATE.activeSubByPanel[panel]) ? STATE.activeSubByPanel[panel] : (panel+"-report"));
-
-    isApplyingRemote = false;
-  });
-
-  // ===== Guardado del estado operativo =====
-  let saveStateTimer = null;
-
-  function getStatePayload() {
+  function getTexts(){
     return {
-      version: 5,
+      plText: document.getElementById("plInput")?.value || "",
+      resText: document.getElementById("resInput")?.value || "",
+      bulkText: document.getElementById("bulkInput")?.value || ""
+    };
+  }
+  function setTexts(t){
+    if(typeof t.plText==="string") document.getElementById("plInput").value = t.plText;
+    if(typeof t.resText==="string") document.getElementById("resInput").value = t.resText;
+    if(typeof t.bulkText==="string") document.getElementById("bulkInput").value = t.bulkText;
+  }
+
+  function getStatePayload(){
+    return {
+      version: 10,
       clientId: CLIENT_ID,
       clientUpdatedAt: Date.now(),
       qtyById: snapshotToPlainObjectMap(STATE.qtyById),
       batchesByPanel: STATE.batchesByPanel || {p1:[],p2:[],p3:[]},
       selectedBatchIdByPanel: STATE.selectedBatchIdByPanel || {p1:null,p2:null,p3:null},
       activePanel: STATE.activePanel || "p1",
-      activeSubByPanel: STATE.activeSubByPanel || {p1:"p1-report", p2:"p2-report", p3:"p3-report"}
+      activeSubByPanel: STATE.activeSubByPanel || {p1:"p1-report",p2:"p2-report",p3:"p3-report"}
     };
   }
 
-  function scheduleSaveState(){
-    if (isApplyingRemote) return;
-    setSyncBadge("Sync: guardando…");
-    clearTimeout(saveStateTimer);
-    saveStateTimer = setTimeout(async () => {
-      try{
-        const payload = getStatePayload();
-        lastLocalWriteState = payload.clientUpdatedAt;
-        await setDoc(hojaRef, { ...payload, updatedAt: serverTimestamp() }, { merge: true });
-        setSyncBadge("Sync: OK", true);
-      }catch(e){
-        console.warn("No se pudo guardar estado:", e);
-        setSyncBadge("Sync: ERROR (estado)", false);
-      }
-    }, 250);
+  // ===== Chunking helpers (evita límite 1MB)
+  const MAX_CHUNK = 65000; // ~65KB por chunk, seguro
+
+  function chunkString(str){
+    const out=[];
+    for(let i=0;i<str.length;i+=MAX_CHUNK) out.push(str.slice(i,i+MAX_CHUNK));
+    return out;
+  }
+  async function saveTextsChunked(texts, updatedAtMs){
+    // Borra chunks anteriores, luego sube nuevos
+    const batch = writeBatch(db);
+    const snap = await getDocs(textsChunksCol);
+    snap.forEach(d => batch.delete(d.ref));
+
+    const plChunks = chunkString(texts.plText||"");
+    const resChunks = chunkString(texts.resText||"");
+    const bulkChunks = chunkString(texts.bulkText||"");
+
+    // Guardar chunks
+    plChunks.forEach((c,i)=> batch.set(doc(textsChunksCol, `pl_${i}`), {i, t:"pl", c}));
+    resChunks.forEach((c,i)=> batch.set(doc(textsChunksCol, `res_${i}`), {i, t:"res", c}));
+    bulkChunks.forEach((c,i)=> batch.set(doc(textsChunksCol, `bulk_${i}`), {i, t:"bulk", c}));
+
+    // Meta
+    batch.set(textsMeta, {
+      version: 10,
+      clientId: CLIENT_ID,
+      clientUpdatedAt: updatedAtMs,
+      plCount: plChunks.length,
+      resCount: resChunks.length,
+      bulkCount: bulkChunks.length,
+      updatedAt: serverTimestamp()
+    }, {merge:true});
+
+    await batch.commit();
   }
 
-  // qty digitado
-  document.addEventListener("input", (ev) => {
-    const el = ev.target;
-    if (el && el.matches('input[data-role="qty"]')) scheduleSaveState();
-  });
+  async function loadTextsChunked(){
+    const metaSnap = await getDocs(collection(db, "opsHubRooms", ROOM_ID, "texts"));
+    // La meta está en texts/meta, pero getDocs no trae doc directo; hacemos getDoc simple:
+  }
 
-  // crear lotes / selects / proceso
-  ["p1CopyPending","p2CopyPending","p3CopyPending","p1BatchSelect","p2BatchSelect","p3BatchSelect","process"].forEach(id => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.addEventListener("click", () => setTimeout(scheduleSaveState, 60));
-    el.addEventListener("change", () => setTimeout(scheduleSaveState, 60));
-  });
-
-  // ===== Hooks textos (autosave + local) =====
-  ["plInput","resInput","bulkInput"].forEach(id => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.addEventListener("input", () => {
-      saveLocalTexts();
-      scheduleSaveTexts();
+  async function fetchTextsFromChunks(){
+    // lee meta
+    const meta = await (await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js")).getDoc(textsMeta);
+    if(!meta.exists()) return {texts:null, meta:null};
+    const m = meta.data()||{};
+    // lee chunks
+    const snap = await getDocs(textsChunksCol);
+    const pl=[],res=[],bulk=[];
+    snap.forEach(d=>{
+      const x=d.data()||{};
+      if(x.t==="pl") pl.push(x);
+      else if(x.t==="res") res.push(x);
+      else if(x.t==="bulk") bulk.push(x);
     });
-    el.addEventListener("focus", markTextDirty);
+    pl.sort((a,b)=>a.i-b.i); res.sort((a,b)=>a.i-b.i); bulk.sort((a,b)=>a.i-b.i);
+    const texts = {
+      plText: pl.map(x=>x.c||"").join(""),
+      resText: res.map(x=>x.c||"").join(""),
+      bulkText: bulk.map(x=>x.c||"").join("")
+    };
+    return {texts, meta:m};
+  }
+
+  // ===== No pisar al escribir: si llega remoto, avisar y aplicar solo con botón
+  let isTyping = false;
+  let typingTimer = null;
+  ["plInput","resInput","bulkInput"].forEach(id=>{
+    const el=document.getElementById(id);
+    if(!el) return;
+    el.addEventListener("input", ()=>{
+      isTyping = true;
+      clearTimeout(typingTimer);
+      typingTimer = setTimeout(()=>{ isTyping=false; }, 800);
+    });
   });
 
-  // ===== Bootstrap: restaurar local primero, luego nube =====
-  ensureReloadCloudButton();
-  const hadLocal = loadLocalTexts();
-  if(hadLocal){
-    // recalcula local para que al abrir se vea algo sin esperar nube
+  const applyBtn = document.getElementById("applyRemote");
+  let pendingRemote = null; // {texts, state, metaUpdatedAt, stateUpdatedAt}
+
+  function showApplyButton(show){
+    if(!applyBtn) return;
+    applyBtn.style.display = show ? "inline-block" : "none";
+  }
+
+  function applyRemoteNow(){
+    if(!pendingRemote) return;
+    const {texts, state} = pendingRemote;
+
+    // aplica texts
+    if(texts) setTexts(texts);
+
+    // recalcula si hay data
+    const hasAny = (document.getElementById("plInput").value.trim() ||
+                    document.getElementById("resInput").value.trim() ||
+                    document.getElementById("bulkInput").value.trim());
+    if(hasAny){
+      try{ process(); }catch(e){}
+    }else{
+      STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
+      STATE.qtyById=new Map();
+      STATE.batchesByPanel={p1:[],p2:[],p3:[]};
+      STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
+      STATE.moveById=new Map();
+      refreshAllTables();
+      setActivePanel("p1"); setActiveSub("p1","p1-report");
+    }
+
+    // aplica state (qty/lotes/tabs) después del process para que existan tablas
+    if(state){
+      STATE.qtyById = objectToMap(state.qtyById);
+      if(state.batchesByPanel) STATE.batchesByPanel = state.batchesByPanel;
+      if(state.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = state.selectedBatchIdByPanel;
+      if(state.activeSubByPanel) STATE.activeSubByPanel = state.activeSubByPanel;
+      refreshAllTables();
+      const panel = state.activePanel || "p1";
+      setActivePanel(panel);
+      setActiveSub(panel, (STATE.activeSubByPanel && STATE.activeSubByPanel[panel]) ? STATE.activeSubByPanel[panel] : (panel+"-report"));
+    }
+
+    // guardar local
+    writeLocal({
+      savedAt: Date.now(),
+      texts: getTexts(),
+      state: getStatePayload()
+    });
+
+    pendingRemote = null;
+    showApplyButton(false);
+    setSyncBadge("Sync: OK (aplicado)", true);
+  }
+
+  applyBtn?.addEventListener("click", applyRemoteNow);
+
+  // ===== Guardado (nube + local)
+  let saveTimer=null;
+  let lastStateWrite=0;
+  let lastTextsWrite=0;
+
+  async function saveAllNow(reason="manual"){
+    const updatedAt = Date.now();
+
+    // guardar local SIEMPRE
+    const localSnap = { savedAt: updatedAt, texts: getTexts(), state: getStatePayload() };
+    writeLocal(localSnap);
+
+    setSyncBadge("Sync: guardando…", true);
+
     try{
+      const statePayload = getStatePayload();
+      statePayload.clientUpdatedAt = updatedAt;
+      lastStateWrite = updatedAt;
+
+      await setDoc(hojaRef, { ...statePayload, updatedAt: serverTimestamp() }, { merge:true });
+
+      // texts chunked
+      const texts = getTexts();
+      lastTextsWrite = updatedAt;
+      await saveTextsChunked(texts, updatedAt);
+
+      setSyncBadge("Sync: OK (guardado)", true);
+    }catch(e){
+      console.warn(e);
+      setSyncBadge("Sync: ERROR (ver consola)", false);
+    }
+  }
+
+  function scheduleSave(){
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(()=>saveAllNow("auto"), 700);
+  }
+
+  document.getElementById("forceSave")?.addEventListener("click", ()=>saveAllNow("force"));
+
+  // Guardar cuando se escriben textos
+  ["plInput","resInput","bulkInput"].forEach(id=>{
+    const el=document.getElementById(id);
+    if(!el) return;
+    el.addEventListener("input", scheduleSave);
+  });
+
+  // Guardar qty/lotes/pestañas
+  document.addEventListener("input",(ev)=>{
+    const el=ev.target;
+    if(el && el.matches('input[data-role="qty"]')) scheduleSave();
+  });
+  ["p1CopyPending","p2CopyPending","p3CopyPending",
+   "p1BatchSelect","p2BatchSelect","p3BatchSelect",
+   "p1CopyBatch","p2CopyBatch","p3CopyBatch",
+   "process"
+  ].forEach(id=>{
+    const el=document.getElementById(id);
+    if(!el) return;
+    el.addEventListener("click", ()=>setTimeout(scheduleSave, 50));
+    el.addEventListener("change", ()=>setTimeout(scheduleSave, 50));
+  });
+
+  // ===== Restauración al cargar: primero LOCAL, luego NUBE
+  async function restoreOnLoad(){
+    // 1) Local inmediato
+    const local = readLocal();
+    if(local?.texts){
+      setTexts(local.texts);
       const hasAny = (document.getElementById("plInput").value.trim() ||
                       document.getElementById("resInput").value.trim() ||
                       document.getElementById("bulkInput").value.trim());
-      if(hasAny) process();
-    }catch(e){}
+      if(hasAny){
+        try{ process(); }catch(e){}
+      }
+      if(local?.state){
+        STATE.qtyById = objectToMap(local.state.qtyById);
+        if(local.state.batchesByPanel) STATE.batchesByPanel = local.state.batchesByPanel;
+        if(local.state.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = local.state.selectedBatchIdByPanel;
+        if(local.state.activeSubByPanel) STATE.activeSubByPanel = local.state.activeSubByPanel;
+        refreshAllTables();
+      }
+      setSyncBadge("Sync: local OK (cargando nube…)", true);
+    }else{
+      setSyncBadge("Sync: cargando nube…", true);
+    }
+
+    // 2) Nube (aplica si es más nueva)
+    const {texts, meta} = await fetchTextsFromChunks().catch(()=>({texts:null, meta:null}));
+    const stateSnap = await (await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js")).getDoc(hojaRef).catch(()=>null);
+    const state = (stateSnap && stateSnap.exists()) ? (stateSnap.data()||{}) : null;
+
+    const cloudTextsTs = meta?.clientUpdatedAt || 0;
+    const cloudStateTs = state?.clientUpdatedAt || 0;
+    const localTs = local?.savedAt || 0;
+
+    // Si nube es más nueva que local, aplica (pero sin pisar si el usuario está tecleando)
+    const cloudNewer = Math.max(cloudTextsTs, cloudStateTs) > localTs;
+
+    if(cloudNewer && (texts || state)){
+      if(isTyping){
+        pendingRemote = {texts, state};
+        showApplyButton(true);
+        setSyncBadge("Sync: hay nueva data en nube (sin pisar) · usa ↻", true);
+      }else{
+        pendingRemote = {texts, state};
+        applyRemoteNow();
+      }
+    }else{
+      setSyncBadge("Sync: OK", true);
+    }
+
+    // listeners para cambios de nube (meta + state)
+    onSnapshot(textsMeta, async (snap)=>{
+      if(!snap.exists()) return;
+      const m=snap.data()||{};
+      if(m.clientId===CLIENT_ID && m.clientUpdatedAt===lastTextsWrite) return;
+
+      const {texts} = await fetchTextsFromChunks().catch(()=>({texts:null}));
+      if(!texts) return;
+
+      if(isTyping){
+        pendingRemote = {...(pendingRemote||{}), texts};
+        showApplyButton(true);
+        setSyncBadge("Sync: nueva data nube (textos) · usa ↻", true);
+      }else{
+        pendingRemote = {...(pendingRemote||{}), texts};
+        applyRemoteNow();
+      }
+    });
+
+    onSnapshot(hojaRef, (snap)=>{
+      if(!snap.exists()) return;
+      const d=snap.data()||{};
+      if(d.clientId===CLIENT_ID && d.clientUpdatedAt===lastStateWrite) return;
+
+      if(isTyping){
+        pendingRemote = {...(pendingRemote||{}), state:d};
+        showApplyButton(true);
+        setSyncBadge("Sync: nueva data nube (estado) · usa ↻", true);
+      }else{
+        pendingRemote = {...(pendingRemote||{}), state:d};
+        applyRemoteNow();
+      }
+    });
   }
 
-  setSyncBadge("Sync: listo (global)", true);
+  // ===== Limpiar hoja GLOBAL: borra nube + local
+  window.limpiarHoja = async function(){
+    const ok = confirm("¿Seguro que deseas LIMPIAR LA HOJA GLOBAL? Esto borra para TODOS.");
+    if(!ok) return;
+    setSyncBadge("Sync: limpiando…", true);
+
+    try{
+      // borrar chunks
+      const snap = await getDocs(textsChunksCol);
+      const batch = writeBatch(db);
+      snap.forEach(d=>batch.delete(d.ref));
+      batch.set(textsMeta, {version:10, clientId: CLIENT_ID, clientUpdatedAt: Date.now(), plCount:0,resCount:0,bulkCount:0, updatedAt: serverTimestamp()}, {merge:true});
+      batch.set(hojaRef, {
+        version:10, clientId: CLIENT_ID, clientUpdatedAt: Date.now(),
+        qtyById:{}, batchesByPanel:{p1:[],p2:[],p3:[]},
+        selectedBatchIdByPanel:{p1:null,p2:null,p3:null},
+        activePanel:"p1", activeSubByPanel:{p1:"p1-report",p2:"p2-report",p3:"p3-report"},
+        updatedAt: serverTimestamp()
+      }, {merge:true});
+      await batch.commit();
+
+      // local
+      try{ localStorage.removeItem(LS_KEY); }catch(e){}
+
+      // aplicar UI
+      document.getElementById("plInput").value="";
+      document.getElementById("resInput").value="";
+      document.getElementById("bulkInput").value="";
+      STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
+      STATE.qtyById=new Map();
+      STATE.batchesByPanel={p1:[],p2:[],p3:[]};
+      STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
+      STATE.moveById=new Map();
+      refreshAllTables();
+      setActivePanel("p1"); setActiveSub("p1","p1-report");
+
+      setSyncBadge("Sync: OK (limpio)", true);
+    }catch(e){
+      console.warn(e);
+      setSyncBadge("Sync: ERROR (limpieza)", false);
+    }
+  };
+
+  // Guardar antes de salir (best-effort)
+  window.addEventListener("beforeunload", ()=>{ try{ writeLocal({savedAt:Date.now(), texts:getTexts(), state:getStatePayload()}); }catch(e){} });
+
+  // GO
+  restoreOnLoad();
+  setSyncBadge("Sync: iniciando…", true);
 </script>
 </body>
 </html>
