@@ -1480,13 +1480,16 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
 
 <script type="module">
   // ===== Firebase (Firestore) Sync =====
-  // Modo ONLINE (1 solo link) SIN pisadas al escribir:
-  // - NO se sincronizan los textareas (PL/Reservado/Bulk).
-  // - SOLO se sincroniza estado operativo: qty digitado, lotes, selección de lote.
-  // Así nadie “borra” lo que otro está tecleando.
+  // Objetivo:
+  // 1) Que al recargar NO se pierda la información (se restaura desde NUBE y también desde localStorage).
+  // 2) Que NADIE le "pise" a otro mientras escribe: si llega data remota y tú estás tipeando, NO se aplica automáticamente.
+  //    Se muestra un botón "Recargar nube" para aplicar cuando tú decidas.
+  // 3) "Limpiar hoja" borra TODO para TODOS.
 
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-  import { getFirestore, doc, onSnapshot, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+  import {
+    getFirestore, doc, onSnapshot, setDoc, getDoc, deleteDoc, serverTimestamp
+  } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyDdXF24bG8QL22a8lkHeHd4ToNq5qDdAI4",
@@ -1497,13 +1500,18 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     appId: "1:1052710112933:web:ed342948f4fb5eb21f074c"
   };
 
+  const ROOM_ID = "global"; // ✅ un solo HTML, una sola "sala" para todos
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
 
-  // Sala única para todos
-  const ROOM_ID = "global";
-  const hojaRef = doc(db, "opsHubRooms", ROOM_ID, "appState", "hoja");
+  // Docs
+  const hojaRef = doc(db, "opsHubRooms", ROOM_ID, "appState", "hoja");                 // estado operativo (qty/lotes/tabs)
+  const metaRef = doc(db, "opsHubRooms", ROOM_ID, "appState", "texts_meta");           // meta de textos (conteo + updatedAt)
+  // Partes de texto (para evitar el límite ~1MB por doc)
+  // ids: pl_0..pl_n, res_0..res_n, bulk_0..bulk_n
+  const partRef = (name, idx) => doc(db, "opsHubRooms", ROOM_ID, "texts", `${name}_${idx}`);
 
+  // Identidad del cliente (evita eco)
   const CLIENT_ID = (() => {
     try {
       const k = "opsHubClientId";
@@ -1517,10 +1525,7 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     }
   })();
 
-  let isApplyingRemote = false;
-  let lastLocalWriteState = 0;
-  let saveTimer = null;
-
+  // ===== UI Helpers =====
   function setSyncBadge(msg, ok=true){
     const el=document.getElementById("syncBadge");
     if(!el) return;
@@ -1530,6 +1535,24 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     el.style.color = ok ? "#0f5132" : "#842029";
   }
 
+  function ensureReloadCloudButton(){
+    let btn = document.getElementById("btnReloadCloud");
+    if (btn) return btn;
+    const badge = document.getElementById("syncBadge");
+    if(!badge) return null;
+
+    btn = document.createElement("button");
+    btn.id = "btnReloadCloud";
+    btn.textContent = "↻ Recargar nube";
+    btn.className = "btn small";
+    btn.style.marginLeft = "10px";
+    btn.style.display = "none";
+
+    badge.insertAdjacentElement("afterend", btn);
+    return btn;
+  }
+
+  // ===== State sync helpers =====
   function snapshotToPlainObjectMap(m) {
     const obj = {};
     for (const [k,v] of m.entries()) obj[k] = v;
@@ -1546,79 +1569,328 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     return m;
   }
 
-  function getStatePayload() {
-    return {
-      version: 4,
-      clientId: CLIENT_ID,
-      clientUpdatedAt: Date.now(),
-      qtyById: snapshotToPlainObjectMap(STATE.qtyById),
-      batchesByPanel: STATE.batchesByPanel || {p1:[],p2:[],p3:[]},
-      selectedBatchIdByPanel: STATE.selectedBatchIdByPanel || {p1:null,p2:null,p3:null},
-      // Importante: NO sincronizamos activePanel/pestañas para que no “regrese solo”
-    };
+  // ===== Text chunking =====
+  const MAX_CHARS_PER_PART = 180000; // margen para no rozar límites (seguro)
+  function chunkString(str, maxChars){
+    const s = (str ?? "").toString();
+    if (!s) return [""];
+    const out = [];
+    for (let i=0; i<s.length; i+=maxChars){
+      out.push(s.slice(i, i+maxChars));
+    }
+    return out;
   }
 
-  function scheduleSave(){
-    if (isApplyingRemote) return;
-    setSyncBadge("Sync: guardando…", true);
-    clearTimeout(saveTimer);
+  // ===== Local typing guard =====
+  let isApplyingRemote = false;
+  let lastLocalWriteState = 0;
+  let lastLocalWriteTexts = 0;
 
-    saveTimer = setTimeout(async () => {
-      try {
-        const payload = getStatePayload();
-        lastLocalWriteState = payload.clientUpdatedAt;
-        await setDoc(hojaRef, { ...payload, updatedAt: serverTimestamp() }, { merge: true });
-        setSyncBadge("Sync: OK", true);
-      } catch(e) {
-        console.warn("No se pudo guardar en Firebase:", e);
-        setSyncBadge("Sync: ERROR (ver consola)", false);
+  let textDirty = false;
+  let lastTextInputAt = 0;
+  let pendingRemoteTexts = false;
+  let pendingRemoteMeta = null;
+
+  function markTextDirty(){
+    textDirty = true;
+    lastTextInputAt = Date.now();
+  }
+  function isUserTypingNow(){
+    return textDirty && (Date.now() - lastTextInputAt < 1800); // si escribió hace <1.8s, consideramos "escribiendo"
+  }
+
+  // ===== LocalStorage (para que recargar nunca pierda) =====
+  const LS_KEY = `opsHub_${ROOM_ID}_texts_v1`;
+  function saveLocalTexts(){
+    try{
+      const payload = {
+        t: Date.now(),
+        pl: document.getElementById("plInput")?.value || "",
+        res: document.getElementById("resInput")?.value || "",
+        bulk: document.getElementById("bulkInput")?.value || ""
+      };
+      localStorage.setItem(LS_KEY, JSON.stringify(payload));
+    }catch(e){}
+  }
+  function loadLocalTexts(){
+    try{
+      const raw = localStorage.getItem(LS_KEY);
+      if(!raw) return false;
+      const payload = JSON.parse(raw);
+      if(!payload) return false;
+
+      const plEl = document.getElementById("plInput");
+      const resEl = document.getElementById("resInput");
+      const bulkEl = document.getElementById("bulkInput");
+
+      if(plEl && typeof payload.pl === "string") plEl.value = payload.pl;
+      if(resEl && typeof payload.res === "string") resEl.value = payload.res;
+      if(bulkEl && typeof payload.bulk === "string") bulkEl.value = payload.bulk;
+
+      return true;
+    }catch(e){ return false; }
+  }
+
+  // ===== Save texts to cloud (chunked) =====
+  let saveTextsTimer = null;
+
+  async function writeTextParts(name, text, oldCount){
+    const parts = chunkString(text, MAX_CHARS_PER_PART);
+    const count = parts.length;
+
+    // write new parts
+    const now = Date.now();
+    const writes = [];
+    for(let i=0;i<count;i++){
+      writes.push(setDoc(partRef(name,i), {
+        i,
+        t: parts[i],
+        clientId: CLIENT_ID,
+        clientUpdatedAt: now,
+        updatedAt: serverTimestamp()
+      }, { merge: true }));
+    }
+
+    // delete extra old parts if new count smaller
+    if (typeof oldCount === "number" && oldCount > count){
+      for(let i=count;i<oldCount;i++){
+        writes.push(deleteDoc(partRef(name,i)));
       }
-    }, 250);
+    }
+
+    await Promise.all(writes);
+    return count;
   }
 
-  // Limpieza global del estado (no borra textareas locales)
+  async function saveTextsToCloud(){
+    if (isApplyingRemote) return;
+
+    setSyncBadge("Sync: guardando…");
+    const plText = document.getElementById("plInput")?.value || "";
+    const resText = document.getElementById("resInput")?.value || "";
+    const bulkText = document.getElementById("bulkInput")?.value || "";
+
+    // Siempre guardar local
+    saveLocalTexts();
+
+    try{
+      // lee meta actual para saber cuántas partes borrar si redujo
+      const metaSnap = await getDoc(metaRef);
+      const meta = metaSnap.exists() ? (metaSnap.data()||{}) : {};
+      const old = meta.counts || {};
+
+      const now = Date.now();
+      lastLocalWriteTexts = now;
+
+      const [cPl, cRes, cBulk] = await Promise.all([
+        writeTextParts("pl", plText, old.pl),
+        writeTextParts("res", resText, old.res),
+        writeTextParts("bulk", bulkText, old.bulk)
+      ]);
+
+      await setDoc(metaRef, {
+        version: 5,
+        clientId: CLIENT_ID,
+        clientUpdatedAt: now,
+        counts: { pl: cPl, res: cRes, bulk: cBulk },
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+
+      textDirty = false;
+      pendingRemoteTexts = false;
+      pendingRemoteMeta = null;
+
+      const btn = ensureReloadCloudButton();
+      if(btn) btn.style.display = "none";
+
+      setSyncBadge("Sync: OK (guardado)", true);
+    }catch(e){
+      console.warn("No se pudo guardar textos:", e);
+      setSyncBadge("Sync: ERROR (textos, ver consola)", false);
+    }
+  }
+
+  function scheduleSaveTexts(){
+    if (isApplyingRemote) return;
+    markTextDirty();
+    clearTimeout(saveTextsTimer);
+    saveTextsTimer = setTimeout(saveTextsToCloud, 900);
+  }
+
+  // ===== Load texts from cloud (chunked) =====
+  async function readTextParts(name, count){
+    if(!count || count<=0) return "";
+    const reads = [];
+    for(let i=0;i<count;i++){
+      reads.push(getDoc(partRef(name,i)));
+    }
+    const snaps = await Promise.all(reads);
+    return snaps.map(s => (s.exists() ? ((s.data()||{}).t || "") : "")).join("");
+  }
+
+  async function applyCloudTexts(meta){
+    if(!meta || !meta.counts) return;
+
+    isApplyingRemote = true;
+    setSyncBadge("Sync: cargando…");
+
+    try{
+      const counts = meta.counts || {};
+      const [plText, resText, bulkText] = await Promise.all([
+        readTextParts("pl", counts.pl),
+        readTextParts("res", counts.res),
+        readTextParts("bulk", counts.bulk)
+      ]);
+
+      // aplica en UI
+      const plEl = document.getElementById("plInput");
+      const resEl = document.getElementById("resInput");
+      const bulkEl = document.getElementById("bulkInput");
+
+      if(plEl) plEl.value = plText || "";
+      if(resEl) resEl.value = resText || "";
+      if(bulkEl) bulkEl.value = bulkText || "";
+
+      // guarda local para que el siguiente refresh sea inmediato
+      saveLocalTexts();
+
+      // recalcula si hay data
+      const hasAny = (plEl?.value.trim() || resEl?.value.trim() || bulkEl?.value.trim());
+      if (hasAny) {
+        try { process(); } catch(e) {}
+      } else {
+        // reset visual (como tu lógica original)
+        STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
+        STATE.qtyById = new Map();
+        STATE.batchesByPanel={p1:[],p2:[],p3:[]};
+        STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
+        STATE.moveById = new Map();
+        refreshAllTables();
+        setActivePanel("p1");
+        setActiveSub("p1","p1-report");
+      }
+
+      textDirty = false;
+      pendingRemoteTexts = false;
+      pendingRemoteMeta = null;
+
+      const btn = ensureReloadCloudButton();
+      if(btn) btn.style.display = "none";
+
+      setSyncBadge("Sync: OK (cargado)", true);
+    }catch(e){
+      console.warn("No se pudo cargar textos:", e);
+      setSyncBadge("Sync: ERROR (carga textos)", false);
+    } finally {
+      isApplyingRemote = false;
+    }
+  }
+
+  // ===== Limpieza global (borra textos + estado para TODOS) =====
   window.limpiarHoja = async function () {
-    const ok = confirm("¿Seguro que deseas LIMPIAR LA HOJA? Esto se borrará para TODOS.");
+    const ok = confirm("¿Seguro que deseas LIMPIAR LA HOJA GLOBAL? Esto se borrará para TODOS.");
     if(!ok) return;
 
     const now = Date.now();
     lastLocalWriteState = now;
+    lastLocalWriteTexts = now;
 
-    const payload = {
-      version: 4,
-      clientId: CLIENT_ID,
-      clientUpdatedAt: now,
-      qtyById: {},
-      batchesByPanel: {p1:[],p2:[],p3:[]},
-      selectedBatchIdByPanel: {p1:null,p2:null,p3:null},
-      updatedAt: serverTimestamp()
-    };
+    setSyncBadge("Sync: limpiando…");
 
-    try {
-      await setDoc(hojaRef, payload, { merge: true });
+    try{
+      // Borra meta y partes (por conteos actuales)
+      const metaSnap = await getDoc(metaRef);
+      const meta = metaSnap.exists() ? (metaSnap.data()||{}) : {};
+      const counts = (meta.counts||{});
+      const dels = [];
+
+      for(const [name, cnt] of Object.entries({pl:counts.pl||0, res:counts.res||0, bulk:counts.bulk||0})){
+        for(let i=0;i<cnt;i++){
+          dels.push(deleteDoc(partRef(name,i)));
+        }
+      }
+      dels.push(deleteDoc(metaRef));
+      await Promise.all(dels);
+
+      // Limpia estado operativo
+      await setDoc(hojaRef, {
+        version: 5,
+        clientId: CLIENT_ID,
+        clientUpdatedAt: now,
+        qtyById: {},
+        batchesByPanel: {p1:[],p2:[],p3:[]},
+        selectedBatchIdByPanel: {p1:null,p2:null,p3:null},
+        activePanel: "p1",
+        activeSubByPanel: {p1:"p1-report", p2:"p2-report", p3:"p3-report"},
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+
+      // Limpia local UI
+      isApplyingRemote = true;
+      document.getElementById("plInput").value = "";
+      document.getElementById("resInput").value = "";
+      document.getElementById("bulkInput").value = "";
+      saveLocalTexts();
+
+      STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
+      STATE.qtyById = new Map();
+      STATE.batchesByPanel={p1:[],p2:[],p3:[]};
+      STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
+      STATE.moveById = new Map();
+      refreshAllTables();
+      setActivePanel("p1");
+      setActiveSub("p1","p1-report");
+      isApplyingRemote = false;
+
+      const btn = ensureReloadCloudButton();
+      if(btn) btn.style.display = "none";
+
       setSyncBadge("Sync: OK (limpio)", true);
-    } catch(e) {
-      console.warn("No se pudo limpiar en Firebase:", e);
+    }catch(e){
+      console.warn("No se pudo limpiar:", e);
       setSyncBadge("Sync: ERROR (limpieza)", false);
+      isApplyingRemote = false;
     }
-
-    // Aplicar local
-    isApplyingRemote = true;
-    STATE.qtyById = new Map();
-    STATE.batchesByPanel = {p1:[],p2:[],p3:[]};
-    STATE.selectedBatchIdByPanel = {p1:null,p2:null,p3:null};
-    refreshAllTables();
-    isApplyingRemote = false;
   };
 
-  onSnapshot(hojaRef, (snap) => {
-    if (!snap.exists()) {
-      setSyncBadge("Sync: listo (sin estado previo)", true);
+  // ===== Listener: META de textos =====
+  onSnapshot(metaRef, async (snap) => {
+    if(!snap.exists()) return;
+    const meta = snap.data() || {};
+
+    // ignora eco propio
+    if (meta.clientId === CLIENT_ID && meta.clientUpdatedAt && meta.clientUpdatedAt === lastLocalWriteTexts) return;
+
+    // si el usuario está escribiendo, NO pisar: marcar pendiente
+    if (isUserTypingNow()){
+      pendingRemoteTexts = true;
+      pendingRemoteMeta = meta;
+
+      const btn = ensureReloadCloudButton();
+      if(btn){
+        btn.style.display = "inline-block";
+        btn.onclick = async () => {
+          pendingRemoteTexts = false;
+          const m = pendingRemoteMeta;
+          pendingRemoteMeta = null;
+          await applyCloudTexts(m);
+        };
+      }
+
+      setSyncBadge("Sync: hay nueva data en nube (no se aplicó)", false);
       return;
     }
+
+    // si no está escribiendo, aplicar directo
+    await applyCloudTexts(meta);
+  });
+
+  // ===== Listener: Estado operativo (qty, lotes, pestañas) =====
+  onSnapshot(hojaRef, (snap) => {
+    if(!snap.exists()) return;
     const data = snap.data() || {};
 
-    // Ignorar eco de mi propia escritura
+    // ignora eco propio
     if (data.clientId === CLIENT_ID && data.clientUpdatedAt && data.clientUpdatedAt === lastLocalWriteState) return;
 
     isApplyingRemote = true;
@@ -1626,30 +1898,89 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     STATE.qtyById = objectToMap(data.qtyById);
     if (data.batchesByPanel) STATE.batchesByPanel = data.batchesByPanel;
     if (data.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = data.selectedBatchIdByPanel;
+    if (data.activeSubByPanel) STATE.activeSubByPanel = data.activeSubByPanel;
 
     refreshAllTables();
 
+    const panel = data.activePanel || "p1";
+    setActivePanel(panel);
+    setActiveSub(panel, (STATE.activeSubByPanel && STATE.activeSubByPanel[panel]) ? STATE.activeSubByPanel[panel] : (panel+"-report"));
+
     isApplyingRemote = false;
-    setSyncBadge("Sync: OK (actualizado)", true);
   });
 
-  // Guardar cambios de qty
+  // ===== Guardado del estado operativo =====
+  let saveStateTimer = null;
+
+  function getStatePayload() {
+    return {
+      version: 5,
+      clientId: CLIENT_ID,
+      clientUpdatedAt: Date.now(),
+      qtyById: snapshotToPlainObjectMap(STATE.qtyById),
+      batchesByPanel: STATE.batchesByPanel || {p1:[],p2:[],p3:[]},
+      selectedBatchIdByPanel: STATE.selectedBatchIdByPanel || {p1:null,p2:null,p3:null},
+      activePanel: STATE.activePanel || "p1",
+      activeSubByPanel: STATE.activeSubByPanel || {p1:"p1-report", p2:"p2-report", p3:"p3-report"}
+    };
+  }
+
+  function scheduleSaveState(){
+    if (isApplyingRemote) return;
+    setSyncBadge("Sync: guardando…");
+    clearTimeout(saveStateTimer);
+    saveStateTimer = setTimeout(async () => {
+      try{
+        const payload = getStatePayload();
+        lastLocalWriteState = payload.clientUpdatedAt;
+        await setDoc(hojaRef, { ...payload, updatedAt: serverTimestamp() }, { merge: true });
+        setSyncBadge("Sync: OK", true);
+      }catch(e){
+        console.warn("No se pudo guardar estado:", e);
+        setSyncBadge("Sync: ERROR (estado)", false);
+      }
+    }, 250);
+  }
+
+  // qty digitado
   document.addEventListener("input", (ev) => {
     const el = ev.target;
-    if (el && el.matches('input[data-role="qty"]')) scheduleSave();
+    if (el && el.matches('input[data-role="qty"]')) scheduleSaveState();
   });
 
-  // Guardar cuando se crean lotes o cambian selectores
-  ["p1CopyPending","p2CopyPending","p3CopyPending",
-   "p1BatchSelect","p2BatchSelect","p3BatchSelect"
-  ].forEach(id => {
+  // crear lotes / selects / proceso
+  ["p1CopyPending","p2CopyPending","p3CopyPending","p1BatchSelect","p2BatchSelect","p3BatchSelect","process"].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
-    el.addEventListener("click", () => setTimeout(scheduleSave, 80));
-    el.addEventListener("change", () => setTimeout(scheduleSave, 80));
+    el.addEventListener("click", () => setTimeout(scheduleSaveState, 60));
+    el.addEventListener("change", () => setTimeout(scheduleSaveState, 60));
   });
 
-  setSyncBadge("Sync: listo · modo GLOBAL (sin pisadas)", true);
+  // ===== Hooks textos (autosave + local) =====
+  ["plInput","resInput","bulkInput"].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("input", () => {
+      saveLocalTexts();
+      scheduleSaveTexts();
+    });
+    el.addEventListener("focus", markTextDirty);
+  });
+
+  // ===== Bootstrap: restaurar local primero, luego nube =====
+  ensureReloadCloudButton();
+  const hadLocal = loadLocalTexts();
+  if(hadLocal){
+    // recalcula local para que al abrir se vea algo sin esperar nube
+    try{
+      const hasAny = (document.getElementById("plInput").value.trim() ||
+                      document.getElementById("resInput").value.trim() ||
+                      document.getElementById("bulkInput").value.trim());
+      if(hasAny) process();
+    }catch(e){}
+  }
+
+  setSyncBadge("Sync: listo (global)", true);
 </script>
 </body>
 </html>
