@@ -1481,7 +1481,7 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
   import {
-    getFirestore, doc, onSnapshot, setDoc, serverTimestamp
+    getFirestore, doc, onSnapshot, setDoc, serverTimestamp, getDoc
   } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
   // === Tu configuración Firebase ===
@@ -1499,8 +1499,10 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
 
   // ✅ Un solo estado global compartido
   const ROOM_ID = "global";
-  const hojaRef   = doc(db, "opsHubRooms", ROOM_ID, "state", "hoja");       // operativo
-  const textosRef = doc(db, "opsHubRooms", ROOM_ID, "state", "hoja_texts"); // textos (pueden ser grandes)
+  const hojaRef   = doc(db, "opsHubRooms", ROOM_ID, "state", "hoja");        // operativo
+  // Textos META (ligero) + chunks de Reservado (pesado)
+  const textosMetaRef = doc(db, "opsHubRooms", ROOM_ID, "state", "hoja_texts_meta");
+  const resChunkRef = (i) => doc(db, "opsHubRooms", ROOM_ID, "state", "res_chunks", "c"+i);
 
   // Identidad del cliente
   const CLIENT_ID = (() => {
@@ -1517,7 +1519,7 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
   })();
 
   // ===== UI: banner de cambios remotos =====
-  let pendingRemote = null; // { textsData, stateData }
+  let pendingRemote = null; // { metaData, stateData }
 
   function ensureRemoteBanner(){
     if (document.getElementById("remoteBanner")) return;
@@ -1571,6 +1573,7 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     return m;
   }
 
+  // UTF-8 rough estimate
   function approxBytes(str){
     if(!str) return 0;
     let bytes=0;
@@ -1593,15 +1596,42 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     return false;
   }
 
+  // ===== Chunking para Reservado (evitar límite 1MB/doc) =====
+  const RES_CHUNK_MAX = 250000; // caracteres aprox, seguro para Firestore
+  function splitChunks(str, size){
+    const out=[];
+    for(let i=0;i<str.length;i+=size) out.push(str.slice(i,i+size));
+    return out;
+  }
+  async function writeReservedChunks(resText, metaNow){
+    const chunks = splitChunks(resText || "", RES_CHUNK_MAX);
+    const ops = chunks.map((txt, i)=> setDoc(resChunkRef(i), {
+      t: txt,
+      i,
+      clientId: CLIENT_ID,
+      clientUpdatedAt: metaNow
+    }, { merge:true }));
+
+    await Promise.all(ops);
+    return chunks.length;
+  }
+  async function readReservedChunks(count){
+    if(!count || count<=0) return "";
+    const snaps = await Promise.all(
+      Array.from({length: count}, (_,i)=>getDoc(resChunkRef(i)))
+    );
+    return snaps.map(s=> (s.exists() ? (s.data().t||"") : "")).join("");
+  }
+
   // ===== Guardado (debounce) =====
   let isApplyingRemote = false;
   let saveTimer = null;
   let lastLocalWriteState = 0;
-  let lastLocalWriteTexts = 0;
+  let lastLocalWriteMeta = 0;
 
   function getStatePayload(){
     return {
-      version: 3,
+      version: 4,
       clientId: CLIENT_ID,
       clientUpdatedAt: Date.now(),
       qtyById: snapshotToPlainObjectMap(STATE.qtyById),
@@ -1610,14 +1640,15 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
       // ❌ NO sincronizamos activePanel/activeSub: evita saltos de pestaña/panel
     };
   }
-  function getTextsPayload(){
+  function getMetaPayload(){
     return {
-      version: 3,
+      version: 4,
       clientId: CLIENT_ID,
       clientUpdatedAt: Date.now(),
       plText: document.getElementById("plInput")?.value || "",
-      resText: document.getElementById("resInput")?.value || "",
-      bulkText: document.getElementById("bulkInput")?.value || ""
+      bulkText: document.getElementById("bulkInput")?.value || "",
+      // resText va en chunks
+      resChunkCount: 0
     };
   }
 
@@ -1628,21 +1659,28 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     saveTimer = setTimeout(async ()=>{
       try{
         const statePayload = getStatePayload();
-        const textsPayload = getTextsPayload();
+        const metaPayload = getMetaPayload();
+        const resText = document.getElementById("resInput")?.value || "";
 
-        // Límite aproximado de Firestore por doc ~1MB
-        const totalBytes = approxBytes(textsPayload.plText) + approxBytes(textsPayload.resText) + approxBytes(textsPayload.bulkText);
-        if (totalBytes > 950000){
-          setSyncBadge(`Sync: ERROR (texto muy grande: ${Math.round(totalBytes/1024)} KB)`, false);
+        // Guardamos Reservado en chunks SIEMPRE (así nunca revienta)
+        const metaNow = metaPayload.clientUpdatedAt;
+        const chunkCount = await writeReservedChunks(resText, metaNow);
+        metaPayload.resChunkCount = chunkCount;
+
+        // Validación extra por si PL/Bulk son enormes
+        const bytesPL = approxBytes(metaPayload.plText);
+        const bytesBulk = approxBytes(metaPayload.bulkText);
+        if (bytesPL + bytesBulk > 950000){
+          setSyncBadge(`Sync: ERROR (PL/Bulk muy grande: ${Math.round((bytesPL+bytesBulk)/1024)} KB)`, false);
           return;
         }
 
         lastLocalWriteState = statePayload.clientUpdatedAt;
-        lastLocalWriteTexts = textsPayload.clientUpdatedAt;
+        lastLocalWriteMeta = metaPayload.clientUpdatedAt;
 
         await Promise.all([
-          setDoc(hojaRef,   { ...statePayload, updatedAt: serverTimestamp() }, { merge:true }),
-          setDoc(textosRef, { ...textsPayload, updatedAt: serverTimestamp() }, { merge:true })
+          setDoc(hojaRef, { ...statePayload, updatedAt: serverTimestamp() }, { merge:true }),
+          setDoc(textosMetaRef, { ...metaPayload, updatedAt: serverTimestamp() }, { merge:true })
         ]);
 
         setSyncBadge("Sync: OK (guardado)", true);
@@ -1650,7 +1688,7 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
         console.warn(e);
         setSyncBadge("Sync: ERROR (ver consola)", false);
       }
-    }, 450);
+    }, 550);
   }
 
   function showRemoteBanner(){
@@ -1659,14 +1697,14 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     if(b) b.style.display = "flex";
   }
 
-  function applyPendingRemote(){
+  async function applyPendingRemote(){
     if(!pendingRemote) return;
     if(isUserEditing()){
       setSyncBadge("Sync: remoto listo (termina de escribir y aplica)", true);
       return;
     }
 
-    const { textsData, stateData } = pendingRemote;
+    const { metaData, stateData } = pendingRemote;
     pendingRemote = null;
 
     const banner = document.getElementById("remoteBanner");
@@ -1680,14 +1718,16 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     const keepBatches = JSON.parse(JSON.stringify(STATE.batchesByPanel || {p1:[],p2:[],p3:[]}));
     const keepSel = JSON.parse(JSON.stringify(STATE.selectedBatchIdByPanel || {p1:null,p2:null,p3:null}));
 
-    // Aplicar textos
-    if(textsData){
-      if (typeof textsData.plText   === "string") document.getElementById("plInput").value   = textsData.plText;
-      if (typeof textsData.resText  === "string") document.getElementById("resInput").value  = textsData.resText;
-      if (typeof textsData.bulkText === "string") document.getElementById("bulkInput").value = textsData.bulkText;
+    // Aplicar textos (PL/Bulk directo, Reservado por chunks)
+    if(metaData){
+      if (typeof metaData.plText === "string") document.getElementById("plInput").value = metaData.plText;
+      if (typeof metaData.bulkText === "string") document.getElementById("bulkInput").value = metaData.bulkText;
+      const cnt = parseInt(metaData.resChunkCount || 0, 10);
+      const resText = await readReservedChunks(cnt);
+      document.getElementById("resInput").value = resText;
     }
 
-    // Recalcular estructura (p1/p2/p3) sin borrar qty/lotes
+    // Recalcular estructura (p1/p2/p3)
     try{ process(); }catch(e){}
 
     // Restaurar estado operativo (avance)
@@ -1708,13 +1748,13 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
   }
 
   // ===== Listeners =====
-  onSnapshot(textosRef, (snap)=>{
+  onSnapshot(textosMetaRef, (snap)=>{
     if(!snap.exists()) return;
     const data = snap.data() || {};
-    if (data.clientId === CLIENT_ID && data.clientUpdatedAt === lastLocalWriteTexts) return;
+    if (data.clientId === CLIENT_ID && data.clientUpdatedAt === lastLocalWriteMeta) return;
 
     pendingRemote = pendingRemote || {};
-    pendingRemote.textsData = data;
+    pendingRemote.metaData = data;
     showRemoteBanner();
     setSyncBadge("Sync: cambios remotos pendientes", true);
   });
@@ -1739,30 +1779,33 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     const el=ev.target;
     if(el && el.matches('input[data-role="qty"]')) scheduleSave();
   });
-  document.getElementById("process")?.addEventListener("click", ()=> setTimeout(scheduleSave, 80));
+  document.getElementById("process")?.addEventListener("click", ()=> setTimeout(scheduleSave, 120));
 
   // ===== Limpiar GLOBAL =====
   window.limpiarHoja = async function(){
     if(!confirm("¿Seguro que deseas LIMPIAR LA HOJA? Esto se borrará para TODOS.")) return;
+
     const now = Date.now();
     lastLocalWriteState = now;
-    lastLocalWriteTexts = now;
+    lastLocalWriteMeta = now;
 
     const statePayload = {
-      version: 3, clientId: CLIENT_ID, clientUpdatedAt: now,
+      version: 4, clientId: CLIENT_ID, clientUpdatedAt: now,
       qtyById: {}, batchesByPanel:{p1:[],p2:[],p3:[]}, selectedBatchIdByPanel:{p1:null,p2:null,p3:null},
       updatedAt: serverTimestamp()
     };
-    const textsPayload = {
-      version: 3, clientId: CLIENT_ID, clientUpdatedAt: now,
-      plText:"", resText:"", bulkText:"",
+    const metaPayload = {
+      version: 4, clientId: CLIENT_ID, clientUpdatedAt: now,
+      plText:"", bulkText:"", resChunkCount: 0,
       updatedAt: serverTimestamp()
     };
 
     try{
+      // limpiar chunks escribiendo un chunk vacío y count=0
       await Promise.all([
         setDoc(hojaRef, statePayload, {merge:true}),
-        setDoc(textosRef, textsPayload, {merge:true})
+        setDoc(textosMetaRef, metaPayload, {merge:true}),
+        setDoc(resChunkRef(0), {t:"", i:0, clientId: CLIENT_ID, clientUpdatedAt: now}, {merge:true})
       ]);
     }catch(e){ console.warn(e); }
 
@@ -1780,6 +1823,7 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
   ensureRemoteBanner();
   setSyncBadge("Sync: OK (listo)", true);
 </script>
+
 
 </body>
 </html>
