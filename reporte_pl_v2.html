@@ -296,7 +296,10 @@
       body[data-print-target="p3-plfmt"] #p3-plfmt,
       body[data-print-target="day-report"] #day-report { display:block !important; }
 
-      body[data-print-target$="plfmt"] table{ font-size: 13px !important; }
+      /* PRINT: make lotes very legible */
+      body[data-print-target$="plfmt"] table{
+        font-size: 13px !important;
+      }
       body[data-print-target$="plfmt"] th{
         font-size: 12px !important;
         color:#1f2937 !important;
@@ -306,7 +309,9 @@
         padding: 8px 7px !important;
         border-bottom: 2px solid #bfeee5 !important;
       }
-      body[data-print-target$="plfmt"] .table-wrap{ border: 1px solid #9adfd4 !important; }
+      body[data-print-target$="plfmt"] .table-wrap{
+        border: 1px solid #9adfd4 !important;
+      }
     }
   </style>
 </head>
@@ -736,6 +741,7 @@ function isValidPLBox(loc){
   if(norm(s)==="0-0000") return false;
   return true;
 }
+
 function bulkLevel(loc){
   const s=(loc||"").toString().trim();
   const m=s.match(/^(\d{2})-(\d{2})-(\d{3})-(\d{2})$/);
@@ -748,6 +754,7 @@ function bulkAisle(loc){
   if(!m) return null;
   return parseInt(m[1],10);
 }
+
 function specialRank(loc){
   const s=(loc||"").toString().trim();
   const n=norm(s);
@@ -759,6 +766,7 @@ function specialRank(loc){
   if(n===norm("Aereos_CW")) return 9030;
   return 9999;
 }
+
 function escapeHTML(s){
   return (s??"").toString()
     .replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
@@ -836,12 +844,13 @@ function buildPLMap(plText){
   }
   return map;
 }
+
 function buildReservedMap(resText){
   const {headers,rows}=parseTSV(resText);
   const iCode=findCol(headers,["Codigo Producto","Código Producto","Codigo","Código"]);
   const iDesc=findCol(headers,["Descripcion","Descripción","Producto","Description"]);
   const iRes=findCol(headers,["Reserved","Reservado"]);
-  const iCaja=findCol(headers,["Caja"]); // Ubicación PL
+  const iCaja=findCol(headers,["Caja"]); // <-- Ubicación PL aquí
   if(iCode<0||iRes<0) throw new Error("Reservado: No encontré columnas (Código Producto, Reserved).");
 
   const map=new Map();
@@ -859,11 +868,12 @@ function buildReservedMap(resText){
   }
 
   for(const it of map.values()){
-    it.plLoc = choosePLLocation(it.plLocs);
+    it.plLoc = choosePLLocation(it.plLocs);     // <-- PL location desde Reservado (Caja)
     it.altaRotacion = isGoodPLLocation(it.plLoc);
   }
   return map;
 }
+
 function buildBulkMap(bulkText){
   const {headers,rows}=parseTSV(bulkText);
   const iCode=findCol(headers,["Variante"]);
@@ -881,6 +891,7 @@ function buildBulkMap(bulkText){
     map.get(code).push({loc,qty});
   }
 
+  // Selection preference: numeric aisles first (aisle asc), then by level (as tie-breaker), then specials.
   for(const arr of map.values()){
     arr.sort((a,b)=>{
       const aAir=isAirCW(a.loc), bAir=isAirCW(b.loc);
@@ -914,6 +925,7 @@ function buildMoves(plMap,resMap,bulkMap){
     const pl=plMap.get(code);
     const stockPL=pl?pl.stock:0;
 
+    // Ubicación PL ahora viene del Reservado ("Caja")
     const plLoc = r.plLoc || "0-0000";
     const alta = !!r.altaRotacion;
 
@@ -946,6 +958,8 @@ function buildMoves(plMap,resMap,bulkMap){
   }
   return moves;
 }
+
+/* Sorting for reports: by aisle asc. Air/CW stays specialRank order. */
 function compareBulkForReport(aLoc,bLoc){
   const aAir=isAirCW(aLoc), bAir=isAirCW(bLoc);
   if(aAir || bAir){
@@ -980,6 +994,7 @@ function splitPanels(moves){
 
   return {p1,p2,p3};
 }
+
 function pillHTML(flags){
   if(!flags||!flags.length) return "";
   return flags.map(f=>{
@@ -1019,6 +1034,8 @@ function renderReport(tbody,list){
     `);
   }
 }
+
+/* Pending table: only rows not yet digitized */
 function renderPending(tbody, list){
   tbody.innerHTML = "";
   for(const m of list){
@@ -1041,6 +1058,7 @@ function renderPending(tbody, list){
     `);
   }
 }
+
 function getPendingCount(list){
   let c=0;
   for(const m of list){
@@ -1058,6 +1076,7 @@ function sumDone(list){
     return s + (Number.isFinite(q)?q:0);
   },0);
 }
+
 function setPanelKPI(panelKey,list){
   document.getElementById(panelKey+"Lines").textContent=String(list.length);
   document.getElementById(panelKey+"Need").textContent=String(sumNeed(list));
@@ -1071,11 +1090,13 @@ function setPanelKPI(panelKey,list){
   else if(pending===0) statusEl.innerHTML=`<span class="pill ok">PANEL LISTO</span>`;
   else statusEl.innerHTML=`<span class="pill bad">FALTAN ${pending}</span>`;
 }
+
 function updatePendingTabLabels(){
   document.querySelector('[data-sub="p1-pending"]').textContent=`Pendientes (${getPendingCount(STATE.p1)})`;
   document.querySelector('[data-sub="p2-pending"]').textContent=`Pendientes (${getPendingCount(STATE.p2)})`;
   document.querySelector('[data-sub="p3-pending"]').textContent=`Pendientes (${getPendingCount(STATE.p3)})`;
 }
+
 function updateDayButtons(){
   const p1Complete=(STATE.p1.length===0)||(getPendingCount(STATE.p1)===0);
   const p2Complete=(STATE.p2.length===0)||(getPendingCount(STATE.p2)===0);
@@ -1083,6 +1104,7 @@ function updateDayButtons(){
   document.getElementById("downloadDay").disabled = !(p1Complete && p2Complete && p3Complete);
   document.getElementById("printDay").disabled = !(p1Complete && p2Complete && p3Complete);
 }
+
 function refreshAllTables(){
   renderReport(document.getElementById("p1ReportBody"),STATE.p1);
   renderReport(document.getElementById("p2ReportBody"),STATE.p2);
@@ -1119,6 +1141,7 @@ function nowLabel(){
   const ss=String(d.getSeconds()).padStart(2,"0");
   return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
 }
+
 function createBatchFromPendingTbody(panel, tbody){
   const inputs=[...tbody.querySelectorAll('input[data-role="qty"][data-id]')];
   const rows=[];
@@ -1130,9 +1153,15 @@ function createBatchFromPendingTbody(panel, tbody){
     const m=STATE.moveById.get(id);
     if(!m) continue;
 
+    // PL location strictly from Reserved ("Caja") stored in moves (and map)
     const plLoc = (STATE.plLocByCode.get(m.code) || m.plLoc || "0-0000");
 
-    rows.push({ code:m.code, bulkLoc:m.bulkLoc, plLoc, qty:q });
+    rows.push({
+      code:m.code,
+      bulkLoc:m.bulkLoc,
+      plLoc,
+      qty:q
+    });
   }
 
   rows.sort((a,b)=>compareCodeAsc(a.code,b.code)||a.bulkLoc.localeCompare(b.bulkLoc));
@@ -1147,6 +1176,7 @@ function createBatchFromPendingTbody(panel, tbody){
 
   return batch;
 }
+
 function renderBatchSelect(panel){
   const sel = document.getElementById(panel+"BatchSelect");
   if(!sel) return;
@@ -1174,6 +1204,7 @@ function renderBatchSelect(panel){
   const want = STATE.selectedBatchIdByPanel[panel] || batches[batches.length-1].id;
   sel.value = want;
 }
+
 function renderSelectedBatch(panel){
   const tbodyId = panel==="p1"?"p1PLFmtBody":panel==="p2"?"p2PLFmtBody":"p3PLFmtBody";
   const tbody = document.getElementById(tbodyId);
@@ -1202,6 +1233,7 @@ function renderSelectedBatch(panel){
     `);
   }
 }
+
 function buildTSVFromBatch(panel){
   const batches = STATE.batchesByPanel[panel];
   if(batches.length===0) return "";
@@ -1245,7 +1277,7 @@ function process(){
   let plMap,resMap,bulkMap,moves;
   try{
     plMap=buildPLMap(plText);
-    resMap=buildReservedMap(resText);
+    resMap=buildReservedMap(resText);      // <-- PL location comes from Reserved(Caja)
     bulkMap=buildBulkMap(bulkText);
     moves=buildMoves(plMap,resMap,bulkMap);
   }catch(e){ alert(e.message); return; }
@@ -1253,6 +1285,7 @@ function process(){
   const {p1,p2,p3}=splitPanels(moves);
   STATE.p1=p1; STATE.p2=p2; STATE.p3=p3;
 
+  // PL Location map per code comes from Reserved(Caja)
   const plLocByCode=new Map();
   for(const [code, it] of resMap.entries()){
     if(it?.plLoc) plLocByCode.set(code, it.plLoc);
@@ -1363,6 +1396,7 @@ function printDayReport(){
 /* Events */
 document.getElementById("process").addEventListener("click",process);
 document.getElementById("clearAll").addEventListener("click", async ()=>{
+  // ✅ Limpieza controlada: borra la hoja para TODOS (Firebase). Si Firebase no está cargado, hace limpieza local.
   const ok = confirm("¿Seguro que deseas LIMPIAR LA HOJA? Esto se borrará para TODOS.");
   if(!ok) return;
 
@@ -1370,10 +1404,12 @@ document.getElementById("clearAll").addEventListener("click", async ()=>{
     try { await window.limpiarHoja(); return; } catch(e) { console.warn("Fallo limpiarHoja() en Firebase, aplico limpieza local.", e); }
   }
 
+  // Fallback local
   document.getElementById("plInput").value="";
   document.getElementById("resInput").value="";
   document.getElementById("bulkInput").value="";
 
+  // reset visual
   STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
   STATE.qtyById = new Map();
   STATE.batchesByPanel={p1:[],p2:[],p3:[]};
@@ -1457,14 +1493,18 @@ document.querySelectorAll('button[data-print]').forEach(b=>{
 document.getElementById("downloadDay").addEventListener("click",downloadDayHTML);
 document.getElementById("printDay").addEventListener("click",printDayReport);
 </script>
-
-<!-- ✅ Firebase Sync con LOCK (evita que se “regrese” cuando otra persona tiene el link abierto) -->
 <script type="module">
+  // ===== Firebase (Firestore) Sync =====
+  // Objetivo: que al cerrar la página quede TODO igual y solo se borre con "Limpiar hoja".
+  // Nota: Firestore tiene límite ~1MB por documento. Para que el bloque "Reservado" no reviente el doc,
+  // guardamos los 3 textos (PL/Reservado/Bulk) en un documento aparte: appState/hoja_texts.
+
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
   import {
-    getFirestore, doc, onSnapshot, setDoc, serverTimestamp, getDoc
+    getFirestore, doc, onSnapshot, setDoc, serverTimestamp
   } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
+  // === Tu configuración Firebase ===
   const firebaseConfig = {
     apiKey: "AIzaSyDdXF24bG8QL22a8lkHeHd4ToNq5qDdAI4",
     authDomain: "oriflame-ops-hub.firebaseapp.com",
@@ -1477,10 +1517,12 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
 
-  const hojaRef   = doc(db, "appState", "hoja");
+  // Documento de estado (ligero)
+  const hojaRef = doc(db, "appState", "hoja");
+  // Documento de textos (pueden ser grandes)
   const textosRef = doc(db, "appState", "hoja_texts");
-  const lockRef   = doc(db, "appState", "lock");
 
+  // Identidad del cliente (para evitar bucles: "yo guardé → me llega snapshot")
   const CLIENT_ID = (() => {
     try {
       const k = "opsHubClientId";
@@ -1489,24 +1531,17 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
       const gen = "c_" + Math.random().toString(16).slice(2) + "_" + Date.now();
       localStorage.setItem(k, gen);
       return gen;
-    } catch {
+    } catch(e) {
       return "c_" + Math.random().toString(16).slice(2) + "_" + Date.now();
     }
   })();
 
-  const CLIENT_NAME = (() => {
-    try{
-      const k="opsHubClientName";
-      const x=localStorage.getItem(k);
-      if(x) return x;
-      const guess = "Operador-" + Math.random().toString(10).slice(2,5);
-      localStorage.setItem(k, guess);
-      return guess;
-    }catch{
-      return "Operador";
-    }
-  })();
+  let isApplyingRemote = false;
+  let lastLocalWriteState = 0;
+  let lastLocalWriteTexts = 0;
+  let saveTimer = null;
 
+  
   function setSyncBadge(msg, ok=true){
     const el=document.getElementById("syncBadge");
     if(!el) return;
@@ -1515,119 +1550,21 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     el.style.borderColor = ok ? "#badbcc" : "#f5c2c7";
     el.style.color = ok ? "#0f5132" : "#842029";
   }
-
-  // ---- LOCK ----
-  const LOCK_TTL_MS = 2 * 60 * 1000;
-  let lockState = { ownerId:null, ownerName:null, expiresAt:0 };
-  let iOwnLock = false;
-  let lockRenewTimer = null;
-
-  function lockValid(ls){
-    return ls && ls.ownerId && ls.expiresAt && (ls.expiresAt > Date.now());
-  }
-
-  async function tryAcquireLock(){
-    try{
-      const snap = await getDoc(lockRef);
-      const ls = snap.exists() ? (snap.data()||{}) : {};
-      const valid = lockValid(ls);
-
-      if(!valid || ls.ownerId === CLIENT_ID){
-        const expiresAt = Date.now() + LOCK_TTL_MS;
-        await setDoc(lockRef, {
-          ownerId: CLIENT_ID,
-          ownerName: CLIENT_NAME,
-          expiresAt,
-          updatedAt: serverTimestamp()
-        }, { merge:true });
-        return true;
-      }
-      return false;
-    }catch(e){
-      console.warn("Lock error:", e);
-      return false;
+  function approxBytes(str){ // UTF-8 rough estimate
+    if(!str) return 0;
+    let bytes = 0;
+    for(let i=0;i<str.length;i++){
+      const code=str.charCodeAt(i);
+      if(code<=0x7f) bytes+=1;
+      else if(code<=0x7ff) bytes+=2;
+      else if(code>=0xd800 && code<=0xdbff){ bytes+=4; i++; }
+      else bytes+=3;
     }
+    return bytes;
   }
 
-  function startRenewLock(){
-    clearInterval(lockRenewTimer);
-    lockRenewTimer = setInterval(async ()=>{
-      if(!iOwnLock) return;
-      await tryAcquireLock();
-    }, 45 * 1000);
-  }
-
-  function showLockMsg(){
-    if(iOwnLock){
-      setSyncBadge(`Sync: OK · Editando: tú (${CLIENT_NAME})`, true);
-    }else if(lockValid(lockState)){
-      setSyncBadge(`Sync: EN USO por ${lockState.ownerName || "otro"} · solo lectura`, false);
-    }else{
-      setSyncBadge("Sync: libre", true);
-    }
-  }
-
-  onSnapshot(lockRef, (snap)=>{
-    const ls = snap.exists() ? (snap.data()||{}) : {};
-    lockState = {
-      ownerId: ls.ownerId || null,
-      ownerName: ls.ownerName || null,
-      expiresAt: ls.expiresAt || 0
-    };
-    iOwnLock = (lockState.ownerId === CLIENT_ID) && lockValid(lockState);
-    showLockMsg();
-  });
-
-  // ---- Focus locks (NO reescribir mientras escribes) ----
-  const focusLock = { pl:false, res:false, bulk:false, qty:false };
-
-  function bindFocusLocks(){
-    const pl = document.getElementById("plInput");
-    const res = document.getElementById("resInput");
-    const bulk = document.getElementById("bulkInput");
-
-    [ [pl,"pl"], [res,"res"], [bulk,"bulk"] ].forEach(([el,key])=>{
-      if(!el) return;
-
-      el.addEventListener("focus", async ()=>{
-        focusLock[key]=true;
-
-        const ok = await tryAcquireLock();
-        iOwnLock = ok;
-
-        if(!ok){
-          el.blur();
-          alert(`⚠️ Este reporte está siendo editado por ${lockState.ownerName || "otro"}.\n\nEspera 2 minutos o pide que cierre la pestaña.`);
-        }else{
-          startRenewLock();
-          showLockMsg();
-        }
-      });
-
-      el.addEventListener("blur", ()=>{
-        focusLock[key]=false;
-        applyPendingIfSafe();
-      });
-    });
-
-    document.addEventListener("focusin", (ev)=>{
-      const t=ev.target;
-      if(t && t.matches && t.matches('input[data-role="qty"]')) focusLock.qty=true;
-    });
-    document.addEventListener("focusout", (ev)=>{
-      const t=ev.target;
-      if(t && t.matches && t.matches('input[data-role="qty"]')){
-        focusLock.qty=false;
-        setTimeout(applyPendingIfSafe, 30);
-      }
-    });
-  }
-
-  function isEditingAnyText(){ return focusLock.pl || focusLock.res || focusLock.bulk; }
-  function isEditingQty(){ return focusLock.qty; }
-
-  // ---- Serialize Map ----
-  function snapshotToPlainObjectMap(m) {
+function snapshotToPlainObjectMap(m) {
+    // Map -> Object
     const obj = {};
     for (const [k,v] of m.entries()) obj[k] = v;
     return obj;
@@ -1636,30 +1573,31 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     const m = new Map();
     if (!obj || typeof obj !== "object") return m;
     for (const k of Object.keys(obj)) {
-      const n = parseInt(obj[k], 10);
+      const v = obj[k];
+      const n = parseInt(v, 10);
       if (Number.isFinite(n) && n > 0) m.set(k, n);
     }
     return m;
   }
 
-  // ---- State / dedupe ----
-  let isApplyingRemote = false;
-
-  let lastLocalWriteTexts = 0;
-  let lastLocalWriteState = 0;
-
-  let lastAppliedTextsUpdate = 0;
-  let lastAppliedStateUpdate = 0;
-
-  let saveTimer = null;
-  let pendingRemoteTexts = null;
-  let pendingRemoteState = null;
-
-  function getTextsPayload(){
+  function getStatePayload() {
     return {
-      version: 5,
+      version: 2,
       clientId: CLIENT_ID,
-      clientName: CLIENT_NAME,
+      clientUpdatedAt: Date.now(),
+      // Estado operativo (ligero)
+      qtyById: snapshotToPlainObjectMap(STATE.qtyById),
+      batchesByPanel: STATE.batchesByPanel || {p1:[],p2:[],p3:[]},
+      selectedBatchIdByPanel: STATE.selectedBatchIdByPanel || {p1:null,p2:null,p3:null},
+      activePanel: STATE.activePanel || "p1",
+      activeSubByPanel: STATE.activeSubByPanel || {p1:"p1-report",p2:"p2-report",p3:"p3-report"}
+    };
+  }
+
+  function getTextsPayload() {
+    return {
+      version: 2,
+      clientId: CLIENT_ID,
       clientUpdatedAt: Date.now(),
       plText: document.getElementById("plInput")?.value || "",
       resText: document.getElementById("resInput")?.value || "",
@@ -1667,206 +1605,189 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     };
   }
 
-  function getStatePayload(){
-    return {
-      version: 5,
-      clientId: CLIENT_ID,
-      clientName: CLIENT_NAME,
-      clientUpdatedAt: Date.now(),
-      qtyById: snapshotToPlainObjectMap(STATE.qtyById),
-      batchesByPanel: STATE.batchesByPanel || {p1:[],p2:[],p3:[]},
-      selectedBatchIdByPanel: STATE.selectedBatchIdByPanel || {p1:null,p2:null,p3:null}
-    };
-  }
-
   function scheduleSave(){
     if (isApplyingRemote) return;
-
-    // si estás editando texto y NO tienes lock: no guardes (evita guerra)
-    if (isEditingAnyText() && !iOwnLock){
-      showLockMsg();
-      return;
-    }
-
+    setSyncBadge("Sync: guardando…");
     clearTimeout(saveTimer);
-    setSyncBadge("Sync: guardando…", true);
+    saveTimer = setTimeout(async () => {
+      try {
+        const statePayload = getStatePayload();
+        const textsPayload = getTextsPayload();
 
-    saveTimer = setTimeout(async ()=>{
-      try{
-        // En este modelo: SOLO quien tiene lock guarda (textos + estado)
-        if(!iOwnLock){
-          setSyncBadge("Sync: bloqueado (sin lock)", false);
+        // Seguridad: evitar exceder límite (~1MB por doc)
+        const totalBytes = approxBytes(textsPayload.plText) + approxBytes(textsPayload.resText) + approxBytes(textsPayload.bulkText);
+        if (totalBytes > 950000) {
+          setSyncBadge(`Sync: ERROR (texto muy grande: ${Math.round(totalBytes/1024)} KB)`, false);
+          console.warn('Texto demasiado grande para Firestore (~1MB). Reduce Reservado (quita columnas o separa por bloques).');
           return;
         }
 
-        const textsPayload = getTextsPayload();
-        const statePayload = getStatePayload();
-
-        lastLocalWriteTexts = textsPayload.clientUpdatedAt;
         lastLocalWriteState = statePayload.clientUpdatedAt;
+        lastLocalWriteTexts = textsPayload.clientUpdatedAt;
 
         await Promise.all([
-          setDoc(textosRef, { ...textsPayload, updatedAt: serverTimestamp() }, { merge:true }),
-          setDoc(hojaRef,   { ...statePayload, updatedAt: serverTimestamp() }, { merge:true })
+          setDoc(hojaRef, { ...statePayload, updatedAt: serverTimestamp() }, { merge: true }),
+          setDoc(textosRef, { ...textsPayload, updatedAt: serverTimestamp() }, { merge: true })
         ]);
-
-        showLockMsg();
-      }catch(e){
-        console.warn("No se pudo guardar:", e);
+        setSyncBadge('Sync: OK (guardado)');
+      } catch(e) {
+        console.warn("No se pudo guardar en Firebase:", e);
         setSyncBadge("Sync: ERROR (ver consola)", false);
       }
     }, 450);
   }
 
-  function applyPendingIfSafe(){
-    if (isApplyingRemote) return;
-
-    if (!isEditingAnyText() && pendingRemoteTexts){
-      const data = pendingRemoteTexts;
-      pendingRemoteTexts = null;
-      if ((data.clientUpdatedAt||0) <= lastAppliedTextsUpdate) return;
-
-      isApplyingRemote = true;
-      if (typeof data.plText === "string")  document.getElementById("plInput").value  = data.plText;
-      if (typeof data.resText === "string") document.getElementById("resInput").value = data.resText;
-      if (typeof data.bulkText === "string")document.getElementById("bulkInput").value= data.bulkText;
-      lastAppliedTextsUpdate = data.clientUpdatedAt || Date.now();
-      isApplyingRemote = false;
-    }
-
-    if (!isEditingQty() && pendingRemoteState){
-      const data = pendingRemoteState;
-      pendingRemoteState = null;
-      if ((data.clientUpdatedAt||0) <= lastAppliedStateUpdate) return;
-
-      isApplyingRemote = true;
-      STATE.qtyById = objectToMap(data.qtyById);
-      if (data.batchesByPanel) STATE.batchesByPanel = data.batchesByPanel;
-      if (data.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = data.selectedBatchIdByPanel;
-      refreshAllTables();
-      lastAppliedStateUpdate = data.clientUpdatedAt || Date.now();
-      isApplyingRemote = false;
-    }
-  }
-
-  // ---- Snapshots ----
-  onSnapshot(textosRef, (snap)=>{
-    if (!snap.exists()) return;
-    const data = snap.data() || {};
-    const t = data.clientUpdatedAt || 0;
-
-    if (t <= lastAppliedTextsUpdate) return;
-    if (data.clientId === CLIENT_ID && t === lastLocalWriteTexts) return;
-
-    // Si yo estoy editando con lock, no me toques el cursor: cola
-    if (isEditingAnyText() && iOwnLock){
-      pendingRemoteTexts = data;
-      return;
-    }
-
-    // Si NO tengo lock y está bloqueado por otro, igual puedo ver, pero NO edito
-    isApplyingRemote = true;
-    if (typeof data.plText === "string")  document.getElementById("plInput").value  = data.plText;
-    if (typeof data.resText === "string") document.getElementById("resInput").value = data.resText;
-    if (typeof data.bulkText === "string")document.getElementById("bulkInput").value= data.bulkText;
-    lastAppliedTextsUpdate = t;
-    isApplyingRemote = false;
-  });
-
-  onSnapshot(hojaRef, (snap)=>{
-    if (!snap.exists()) return;
-    const data = snap.data() || {};
-    const t = data.clientUpdatedAt || 0;
-
-    if (t <= lastAppliedStateUpdate) return;
-    if (data.clientId === CLIENT_ID && t === lastLocalWriteState) return;
-
-    if (isEditingQty() && iOwnLock){
-      pendingRemoteState = data;
-      return;
-    }
-
-    isApplyingRemote = true;
-    STATE.qtyById = objectToMap(data.qtyById);
-    if (data.batchesByPanel) STATE.batchesByPanel = data.batchesByPanel;
-    if (data.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = data.selectedBatchIdByPanel;
-    refreshAllTables();
-    lastAppliedStateUpdate = t;
-    isApplyingRemote = false;
-  });
-
-  // ---- Limpiar Hoja (requiere lock) ----
-  window.limpiarHoja = async function(){
-    const ok = confirm("¿Seguro que deseas limpiar la hoja? Esto se borrará para TODOS.");
-    if(!ok) return;
-
-    const got = await tryAcquireLock();
-    if(!got){
-      alert(`No puedes limpiar porque está en uso por ${lockState.ownerName || "otro"}.`);
-      return;
-    }
-    iOwnLock = true;
-    startRenewLock();
-    showLockMsg();
+  // Exponer una función global para "Limpiar hoja"
+  window.limpiarHoja = async function () {
+    if (!confirm("¿Seguro que deseas limpiar la hoja? Esto se borrará para TODOS.")) return;
 
     const now = Date.now();
-    lastLocalWriteTexts = now;
     lastLocalWriteState = now;
-    lastAppliedTextsUpdate = now;
-    lastAppliedStateUpdate = now;
+    lastLocalWriteTexts = now;
 
     const statePayload = {
-      version: 5, clientId: CLIENT_ID, clientName: CLIENT_NAME, clientUpdatedAt: now,
-      qtyById: {}, batchesByPanel:{p1:[],p2:[],p3:[]}, selectedBatchIdByPanel:{p1:null,p2:null,p3:null},
+      version: 2,
+      clientId: CLIENT_ID,
+      clientUpdatedAt: now,
+      qtyById: {},
+      batchesByPanel: {p1:[],p2:[],p3:[]},
+      selectedBatchIdByPanel: {p1:null,p2:null,p3:null},
+      activePanel: "p1",
+      activeSubByPanel: {p1:"p1-report",p2:"p2-report",p3:"p3-report"},
       updatedAt: serverTimestamp()
     };
     const textsPayload = {
-      version: 5, clientId: CLIENT_ID, clientName: CLIENT_NAME, clientUpdatedAt: now,
-      plText:"", resText:"", bulkText:"",
+      version: 2,
+      clientId: CLIENT_ID,
+      clientUpdatedAt: now,
+      plText: "",
+      resText: "",
+      bulkText: "",
       updatedAt: serverTimestamp()
     };
 
-    await Promise.all([
-      setDoc(hojaRef, statePayload, {merge:true}),
-      setDoc(textosRef, textsPayload, {merge:true})
-    ]);
+    try {
+      await Promise.all([
+        setDoc(hojaRef, statePayload, { merge: true }),
+        setDoc(textosRef, textsPayload, { merge: true })
+      ]);
+    } catch(e) {
+      console.warn("No se pudo limpiar en Firebase:", e);
+    }
 
+    // Aplicar también local
     isApplyingRemote = true;
-    document.getElementById("plInput").value="";
-    document.getElementById("resInput").value="";
-    document.getElementById("bulkInput").value="";
+    setSyncBadge("Sync: cargando…");
+    document.getElementById("plInput").value = "";
+    document.getElementById("resInput").value = "";
+    document.getElementById("bulkInput").value = "";
 
     STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
-    STATE.qtyById=new Map();
+    STATE.qtyById = new Map();
     STATE.batchesByPanel={p1:[],p2:[],p3:[]};
     STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
-    STATE.moveById=new Map();
-    refreshAllTables();
-    isApplyingRemote = false;
+    STATE.moveById = new Map();
 
-    showLockMsg();
+    refreshAllTables();
+    setActivePanel("p1");
+    setActiveSub("p1","p1-report");
+    isApplyingRemote = false;
   };
 
-  // ---- Hooks ----
-  bindFocusLocks();
+  // ===== Listener 1: Textos (PL/Reservado/Bulk) =====
+  onSnapshot(textosRef, (snap) => {
+    if (!snap.exists()) return;
+    const data = snap.data() || {};
 
-  ["plInput","resInput","bulkInput"].forEach(id=>{
-    const el=document.getElementById(id);
-    if(!el) return;
+    // Ignorar eco de mi propia escritura
+    if (data.clientId === CLIENT_ID && data.clientUpdatedAt && data.clientUpdatedAt === lastLocalWriteTexts) return;
+
+    isApplyingRemote = true;
+
+    if (typeof data.plText === "string") document.getElementById("plInput").value = data.plText;
+    if (typeof data.resText === "string") document.getElementById("resInput").value = data.resText;
+    if (typeof data.bulkText === "string") document.getElementById("bulkInput").value = data.bulkText;
+
+    // Recalcular reporte si hay data suficiente
+    const hasAny = (document.getElementById("plInput").value.trim() ||
+                    document.getElementById("resInput").value.trim() ||
+                    document.getElementById("bulkInput").value.trim());
+    if (hasAny) {
+      try { process(); } catch(e) { /* process ya maneja alert */ }
+    } else {
+      STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
+      STATE.qtyById = new Map();
+      STATE.batchesByPanel={p1:[],p2:[],p3:[]};
+      STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
+      STATE.moveById = new Map();
+      refreshAllTables();
+      setActivePanel("p1");
+      setActiveSub("p1","p1-report");
+    }
+
+    isApplyingRemote = false;
+    setSyncBadge("Sync: OK (cargado)");
+  });
+
+  // ===== Listener 2: Estado operativo (qty, lotes, pestañas) =====
+  onSnapshot(hojaRef, (snap) => {
+    if (!snap.exists()) return;
+    const data = snap.data() || {};
+
+    // Ignorar eco de mi propia escritura
+    if (data.clientId === CLIENT_ID && data.clientUpdatedAt && data.clientUpdatedAt === lastLocalWriteState) return;
+
+    isApplyingRemote = true;
+
+    STATE.qtyById = objectToMap(data.qtyById);
+    if (data.batchesByPanel) STATE.batchesByPanel = data.batchesByPanel;
+    if (data.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = data.selectedBatchIdByPanel;
+    if (data.activeSubByPanel) STATE.activeSubByPanel = data.activeSubByPanel;
+
+    refreshAllTables();
+
+    const panel = data.activePanel || "p1";
+    setActivePanel(panel);
+    setActiveSub(panel, (STATE.activeSubByPanel && STATE.activeSubByPanel[panel]) ? STATE.activeSubByPanel[panel] : (panel+"-report"));
+
+    isApplyingRemote = false;
+  });
+
+  // ===== Hooks para guardar =====
+  // Inputs: guardar cada vez que cambian los textos
+  ["plInput","resInput","bulkInput"].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
     el.addEventListener("input", scheduleSave);
   });
 
-  document.addEventListener("input",(ev)=>{
-    const t = ev.target;
-    if (t && t.matches && t.matches('input[data-role="qty"]')) scheduleSave();
+  // Guardar cuando se procesa
+  document.getElementById("process")?.addEventListener("click", () => {
+    setTimeout(scheduleSave, 50);
   });
 
-  document.getElementById("process")?.addEventListener("click", ()=>{
-    setTimeout(scheduleSave, 120);
+  // Guardar cambios de qty
+  document.addEventListener("input", (ev) => {
+    const el = ev.target;
+    if (el && el.matches('input[data-role="qty"]')) scheduleSave();
   });
 
-  setSyncBadge("Sync: listo", true);
+  // Guardar cuando se crean lotes / cambian lotes / cambian pestañas
+  [
+    "p1CopyPending","p2CopyPending","p3CopyPending",
+    "p1BatchSelect","p2BatchSelect","p3BatchSelect",
+    "p1MakeBatch","p2MakeBatch","p3MakeBatch",
+    "tabP1","tabP2","tabP3",
+    "btnP1Report","btnP1Pending","btnP1Batch",
+    "btnP2Report","btnP2Pending","btnP2Batch",
+    "btnP3Report","btnP3Pending","btnP3Batch"
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("click", () => setTimeout(scheduleSave, 60));
+    el.addEventListener("change", () => setTimeout(scheduleSave, 60));
+  });
+
 </script>
-
 </body>
 </html>
