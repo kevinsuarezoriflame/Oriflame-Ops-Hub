@@ -1381,7 +1381,63 @@ document.getElementById("p3CopyBatch").addEventListener("click",async ()=>{ awai
     applyBtn.style.display = show ? "inline-block" : "none";
   }
 
-  function applyRemoteNow(){
+  
+  // Recalcula movimientos SIN borrar avance (qty/lotes). Evita “reinicios”.
+  function processPreserve(){
+    const plText=document.getElementById("plInput").value;
+    const resText=document.getElementById("resInput").value;
+    const bulkText=document.getElementById("bulkInput").value;
+
+    let plMap,resMap,bulkMap,moves;
+    try{
+      plMap=buildPLMap(plText);
+      resMap=buildReservedMap(resText);
+      bulkMap=buildBulkMap(bulkText);
+      moves=buildMoves(plMap,resMap,bulkMap);
+    }catch(e){ console.warn(e); return; }
+
+    const {p1,p2,p3}=splitPanels(moves);
+    STATE.p1=p1; STATE.p2=p2; STATE.p3=p3;
+
+    // PL location por código
+    const plLocByCode=new Map();
+    for(const [code, it] of resMap.entries()){
+      if(it?.plLoc) plLocByCode.set(code, it.plLoc);
+    }
+    STATE.plLocByCode=plLocByCode;
+
+    // moveById actualizado
+    const moveById=new Map();
+    const validIds=new Set();
+    for(const m of moves){
+      const id=idKey(m.code,m.bulkLoc);
+      moveById.set(id, m);
+      validIds.add(id);
+    }
+    STATE.moveById=moveById;
+
+    // 🔒 Mantener avance: filtrar qtyById solo a IDs vigentes
+    const filteredQty=new Map();
+    for(const [k,v] of (STATE.qtyById||new Map()).entries()){
+      if(validIds.has(k) && Number(v)>0) filteredQty.set(k, Number(v));
+    }
+    STATE.qtyById=filteredQty;
+
+    // 🔒 Mantener lotes: filtrar filas que ya no existan
+    if(STATE.batchesByPanel){
+      for(const panel of ["p1","p2","p3"]){
+        const arr=(STATE.batchesByPanel[panel]||[]);
+        for(const b of arr){
+          b.rows = (b.rows||[]).filter(r => validIds.has(idKey(r.code, r.bulkLoc)));
+        }
+        // opcional: quitar lotes vacíos
+        STATE.batchesByPanel[panel] = arr.filter(b => (b.rows||[]).length>0);
+      }
+    }
+
+    refreshAllTables();
+  }
+function applyRemoteNow(){
     if(!pendingRemote) return;
     const {texts, state} = pendingRemote;
 
@@ -1393,7 +1449,7 @@ document.getElementById("p3CopyBatch").addEventListener("click",async ()=>{ awai
                     document.getElementById("resInput").value.trim() ||
                     document.getElementById("bulkInput").value.trim());
     if(hasAny){
-      try{ process(); }catch(e){}
+      try{ processPreserve(); }catch(e){}
     }else{
       STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
       STATE.qtyById=new Map();
@@ -1401,7 +1457,6 @@ document.getElementById("p3CopyBatch").addEventListener("click",async ()=>{ awai
       STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
       STATE.moveById=new Map();
       refreshAllTables();
-      setActivePanel("p1"); setActiveSub("p1","p1-report");
     }
 
     // aplica state (qty/lotes/tabs) después del process para que existan tablas
@@ -1409,12 +1464,7 @@ document.getElementById("p3CopyBatch").addEventListener("click",async ()=>{ awai
       STATE.qtyById = objectToMap(state.qtyById);
       if(state.batchesByPanel) STATE.batchesByPanel = state.batchesByPanel;
       if(state.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = state.selectedBatchIdByPanel;
-      if(state.activeSubByPanel) STATE.activeSubByPanel = state.activeSubByPanel;
-      refreshAllTables();
-      const panel = state.activePanel || "p1";
-      setActivePanel(panel);
-      setActiveSub(panel, (STATE.activeSubByPanel && STATE.activeSubByPanel[panel]) ? STATE.activeSubByPanel[panel] : (panel+"-report"));
-    }
+}
 
     // guardar local
     writeLocal({
@@ -1503,7 +1553,7 @@ document.getElementById("p3CopyBatch").addEventListener("click",async ()=>{ awai
                       document.getElementById("resInput").value.trim() ||
                       document.getElementById("bulkInput").value.trim());
       if(hasAny){
-        try{ process(); }catch(e){}
+        try{ processPreserve(); }catch(e){}
       }
       if(local?.state){
         STATE.qtyById = objectToMap(local.state.qtyById);
@@ -1593,7 +1643,7 @@ document.getElementById("p3CopyBatch").addEventListener("click",async ()=>{ awai
         version:10, clientId: CLIENT_ID, clientUpdatedAt: Date.now(),
         qtyById:{}, batchesByPanel:{p1:[],p2:[],p3:[]},
         selectedBatchIdByPanel:{p1:null,p2:null,p3:null},
-        activePanel:"p1", activeSubByPanel:{p1:"p1-report",p2:"p2-report",p3:"p3-report"},
+        p2:"p2-report",p3:"p3-report"},
         updatedAt: serverTimestamp()
       }, {merge:true});
       await batch.commit();
@@ -1611,7 +1661,6 @@ document.getElementById("p3CopyBatch").addEventListener("click",async ()=>{ awai
       STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
       STATE.moveById=new Map();
       refreshAllTables();
-      setActivePanel("p1"); setActiveSub("p1","p1-report");
 
       setSyncBadge("Sync: OK (limpio)", true);
     }catch(e){
