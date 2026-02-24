@@ -1191,49 +1191,34 @@ document.getElementById("p2CopyBatch").addEventListener("click",async ()=>{ awai
 document.getElementById("p3CopyBatch").addEventListener("click",async ()=>{ await copyText(buildTSVFromBatch("p3")); });
 </script>
 
-<script type="module">
-  // ===== Persistencia TOTAL (Nube + Local) SIN pisarse =====
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-  import {
-    getFirestore, doc, collection, getDocs, setDoc, deleteDoc,
-    onSnapshot, serverTimestamp, writeBatch
-  } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-  const firebaseConfig = {
-    apiKey: "AIzaSyDdXF24bG8QL22a8lkHeHd4ToNq5qDdAI4",
-    authDomain: "oriflame-ops-hub.firebaseapp.com",
-    projectId: "oriflame-ops-hub",
-    storageBucket: "oriflame-ops-hub.firebasestorage.app",
-    messagingSenderId: "1052710112933",
-    appId: "1:1052710112933:web:ed342948f4fb5eb21f074c"
-  };
+<script>
+/* ===== Persistencia LOCAL (sin Firebase) =====
+   Objetivo: está online (GitHub Pages) pero el estado se guarda SOLO en esta PC (localStorage),
+   así no hay "reinicios" por actualizaciones remotas.
+*/
+(function(){
+  const KEY = "opsHub_local_state_v3";
 
-  const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app);
-
-  // Sala global (1 link, todos)
-  const ROOM_ID = "global";
-  const base = doc(db, "opsHubRooms", ROOM_ID);
-
-  const hojaRef   = doc(db, "opsHubRooms", ROOM_ID, "state", "hoja");       // estado operativo
-  const textsMeta = doc(db, "opsHubRooms", ROOM_ID, "texts", "meta");       // meta + chunks info
-  const textsChunksCol = collection(db, "opsHubRooms", ROOM_ID, "textsChunks");
-
-  const CLIENT_ID = (() => {
-    try {
-      const k = "opsHubClientId";
-      const existing = localStorage.getItem(k);
-      if (existing) return existing;
-      const gen = "c_" + Math.random().toString(16).slice(2) + "_" + Date.now();
-      localStorage.setItem(k, gen);
-      return gen;
-    } catch(e) {
-      return "c_" + Math.random().toString(16).slice(2) + "_" + Date.now();
+  function snapshotToObj(map){
+    const obj = {};
+    if(map && map instanceof Map){
+      for(const [k,v] of map.entries()) obj[k]=v;
     }
-  })();
+    return obj;
+  }
+  function objToMap(obj){
+    const m = new Map();
+    if(obj && typeof obj==="object"){
+      for(const k of Object.keys(obj)){
+        const n = parseInt(obj[k],10);
+        if(Number.isFinite(n) && n>0) m.set(k,n);
+      }
+    }
+    return m;
+  }
 
-  // ===== UI badge
-  function setSyncBadge(msg, ok=true){
+  function setBadge(msg, ok=true){
     const el=document.getElementById("syncBadge");
     if(!el) return;
     el.textContent = msg;
@@ -1242,439 +1227,126 @@ document.getElementById("p3CopyBatch").addEventListener("click",async ()=>{ awai
     el.style.color = ok ? "#0f5132" : "#842029";
   }
 
-  // ===== Local storage (fallback inmediato)
-  const LS_KEY = "opsHub_global_snapshot_v1";
-
-  function snapshotToPlainObjectMap(m){
-    const obj={}; for(const [k,v] of m.entries()) obj[k]=v; return obj;
-  }
-  function objectToMap(obj){
-    const m=new Map();
-    if(!obj||typeof obj!=="object") return m;
-    for(const k of Object.keys(obj)){
-      const n=parseInt(obj[k],10);
-      if(Number.isFinite(n)&&n>0) m.set(k,n);
-    }
-    return m;
-  }
-
-  function readLocal(){
-    try{
-      const raw=localStorage.getItem(LS_KEY);
-      if(!raw) return null;
-      return JSON.parse(raw);
-    }catch(e){ return null; }
-  }
-  function writeLocal(payload){
-    try{ localStorage.setItem(LS_KEY, JSON.stringify(payload)); }catch(e){}
-  }
-
-  function getTexts(){
+  function buildPayload(){
     return {
-      plText: document.getElementById("plInput")?.value || "",
-      resText: document.getElementById("resInput")?.value || "",
-      bulkText: document.getElementById("bulkInput")?.value || ""
-    };
-  }
-  function setTexts(t){
-    if(typeof t.plText==="string") document.getElementById("plInput").value = t.plText;
-    if(typeof t.resText==="string") document.getElementById("resInput").value = t.resText;
-    if(typeof t.bulkText==="string") document.getElementById("bulkInput").value = t.bulkText;
-  }
-
-  function getStatePayload(){
-    return {
-      version: 10,
-      clientId: CLIENT_ID,
-      clientUpdatedAt: Date.now(),
-      qtyById: snapshotToPlainObjectMap(STATE.qtyById),
-      batchesByPanel: STATE.batchesByPanel || {p1:[],p2:[],p3:[]},
-      selectedBatchIdByPanel: STATE.selectedBatchIdByPanel || {p1:null,p2:null,p3:null},
-      activePanel: STATE.activePanel || "p1",
-      activeSubByPanel: STATE.activeSubByPanel || {p1:"p1-report",p2:"p2-report",p3:"p3-report"}
-    };
-  }
-
-  // ===== Chunking helpers (evita límite 1MB)
-  const MAX_CHUNK = 65000; // ~65KB por chunk, seguro
-
-  function chunkString(str){
-    const out=[];
-    for(let i=0;i<str.length;i+=MAX_CHUNK) out.push(str.slice(i,i+MAX_CHUNK));
-    return out;
-  }
-  async function saveTextsChunked(texts, updatedAtMs){
-    // Borra chunks anteriores, luego sube nuevos
-    const batch = writeBatch(db);
-    const snap = await getDocs(textsChunksCol);
-    snap.forEach(d => batch.delete(d.ref));
-
-    const plChunks = chunkString(texts.plText||"");
-    const resChunks = chunkString(texts.resText||"");
-    const bulkChunks = chunkString(texts.bulkText||"");
-
-    // Guardar chunks
-    plChunks.forEach((c,i)=> batch.set(doc(textsChunksCol, `pl_${i}`), {i, t:"pl", c}));
-    resChunks.forEach((c,i)=> batch.set(doc(textsChunksCol, `res_${i}`), {i, t:"res", c}));
-    bulkChunks.forEach((c,i)=> batch.set(doc(textsChunksCol, `bulk_${i}`), {i, t:"bulk", c}));
-
-    // Meta
-    batch.set(textsMeta, {
-      version: 10,
-      clientId: CLIENT_ID,
-      clientUpdatedAt: updatedAtMs,
-      plCount: plChunks.length,
-      resCount: resChunks.length,
-      bulkCount: bulkChunks.length,
-      updatedAt: serverTimestamp()
-    }, {merge:true});
-
-    await batch.commit();
-  }
-
-  async function loadTextsChunked(){
-    const metaSnap = await getDocs(collection(db, "opsHubRooms", ROOM_ID, "texts"));
-    // La meta está en texts/meta, pero getDocs no trae doc directo; hacemos getDoc simple:
-  }
-
-  async function fetchTextsFromChunks(){
-    // lee meta
-    const meta = await (await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js")).getDoc(textsMeta);
-    if(!meta.exists()) return {texts:null, meta:null};
-    const m = meta.data()||{};
-    // lee chunks
-    const snap = await getDocs(textsChunksCol);
-    const pl=[],res=[],bulk=[];
-    snap.forEach(d=>{
-      const x=d.data()||{};
-      if(x.t==="pl") pl.push(x);
-      else if(x.t==="res") res.push(x);
-      else if(x.t==="bulk") bulk.push(x);
-    });
-    pl.sort((a,b)=>a.i-b.i); res.sort((a,b)=>a.i-b.i); bulk.sort((a,b)=>a.i-b.i);
-    const texts = {
-      plText: pl.map(x=>x.c||"").join(""),
-      resText: res.map(x=>x.c||"").join(""),
-      bulkText: bulk.map(x=>x.c||"").join("")
-    };
-    return {texts, meta:m};
-  }
-
-  // ===== No pisar al escribir: si llega remoto, avisar y aplicar solo con botón
-  let isTyping = false;
-  let typingTimer = null;
-  ["plInput","resInput","bulkInput"].forEach(id=>{
-    const el=document.getElementById(id);
-    if(!el) return;
-    el.addEventListener("input", ()=>{
-      isTyping = true;
-      clearTimeout(typingTimer);
-      typingTimer = setTimeout(()=>{ isTyping=false; }, 800);
-    });
-  });
-
-  const applyBtn = document.getElementById("applyRemote");
-  let pendingRemote = null; // {texts, state, metaUpdatedAt, stateUpdatedAt}
-
-  function showApplyButton(show){
-    if(!applyBtn) return;
-    applyBtn.style.display = show ? "inline-block" : "none";
-  }
-
-  
-  // Recalcula movimientos SIN borrar avance (qty/lotes). Evita “reinicios”.
-  function processPreserve(){
-    const plText=document.getElementById("plInput").value;
-    const resText=document.getElementById("resInput").value;
-    const bulkText=document.getElementById("bulkInput").value;
-
-    let plMap,resMap,bulkMap,moves;
-    try{
-      plMap=buildPLMap(plText);
-      resMap=buildReservedMap(resText);
-      bulkMap=buildBulkMap(bulkText);
-      moves=buildMoves(plMap,resMap,bulkMap);
-    }catch(e){ console.warn(e); return; }
-
-    const {p1,p2,p3}=splitPanels(moves);
-    STATE.p1=p1; STATE.p2=p2; STATE.p3=p3;
-
-    // PL location por código
-    const plLocByCode=new Map();
-    for(const [code, it] of resMap.entries()){
-      if(it?.plLoc) plLocByCode.set(code, it.plLoc);
-    }
-    STATE.plLocByCode=plLocByCode;
-
-    // moveById actualizado
-    const moveById=new Map();
-    const validIds=new Set();
-    for(const m of moves){
-      const id=idKey(m.code,m.bulkLoc);
-      moveById.set(id, m);
-      validIds.add(id);
-    }
-    STATE.moveById=moveById;
-
-    // 🔒 Mantener avance: filtrar qtyById solo a IDs vigentes
-    const filteredQty=new Map();
-    for(const [k,v] of (STATE.qtyById||new Map()).entries()){
-      if(validIds.has(k) && Number(v)>0) filteredQty.set(k, Number(v));
-    }
-    STATE.qtyById=filteredQty;
-
-    // 🔒 Mantener lotes: filtrar filas que ya no existan
-    if(STATE.batchesByPanel){
-      for(const panel of ["p1","p2","p3"]){
-        const arr=(STATE.batchesByPanel[panel]||[]);
-        for(const b of arr){
-          b.rows = (b.rows||[]).filter(r => validIds.has(idKey(r.code, r.bulkLoc)));
-        }
-        // opcional: quitar lotes vacíos
-        STATE.batchesByPanel[panel] = arr.filter(b => (b.rows||[]).length>0);
-      }
-    }
-
-    refreshAllTables();
-  }
-function applyRemoteNow(){
-    if(!pendingRemote) return;
-    const {texts, state} = pendingRemote;
-
-    // aplica texts
-    if(texts) setTexts(texts);
-
-    // recalcula si hay data
-    const hasAny = (document.getElementById("plInput").value.trim() ||
-                    document.getElementById("resInput").value.trim() ||
-                    document.getElementById("bulkInput").value.trim());
-    if(hasAny){
-      try{ processPreserve(); }catch(e){}
-    }else{
-      STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
-      STATE.qtyById=new Map();
-      STATE.batchesByPanel={p1:[],p2:[],p3:[]};
-      STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
-      STATE.moveById=new Map();
-      refreshAllTables();
-    }
-
-    // aplica state (qty/lotes/tabs) después del process para que existan tablas
-    if(state){
-      STATE.qtyById = objectToMap(state.qtyById);
-      if(state.batchesByPanel) STATE.batchesByPanel = state.batchesByPanel;
-      if(state.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = state.selectedBatchIdByPanel;
-}
-
-    // guardar local
-    writeLocal({
+      version: 3,
       savedAt: Date.now(),
-      texts: getTexts(),
-      state: getStatePayload()
-    });
-
-    pendingRemote = null;
-    showApplyButton(false);
-    setSyncBadge("Sync: OK (aplicado)", true);
+      texts: {
+        plText: document.getElementById("plInput")?.value || "",
+        resText: document.getElementById("resInput")?.value || "",
+        bulkText: document.getElementById("bulkInput")?.value || ""
+      },
+      ui: {
+        activePanel: (window.STATE && STATE.activePanel) ? STATE.activePanel : "p1",
+        activeSubByPanel: (window.STATE && STATE.activeSubByPanel) ? STATE.activeSubByPanel : {p1:"p1-report",p2:"p2-report",p3:"p3-report"},
+        selectedBatchIdByPanel: (window.STATE && STATE.selectedBatchIdByPanel) ? STATE.selectedBatchIdByPanel : {p1:null,p2:null,p3:null}
+      },
+      data: {
+        qtyById: snapshotToObj(window.STATE ? STATE.qtyById : new Map()),
+        batchesByPanel: (window.STATE && STATE.batchesByPanel) ? STATE.batchesByPanel : {p1:[],p2:[],p3:[]}
+      }
+    };
   }
 
-  applyBtn?.addEventListener("click", applyRemoteNow);
-
-  // ===== Guardado (nube + local)
-  let saveTimer=null;
-  let lastStateWrite=0;
-  let lastTextsWrite=0;
-
-  async function saveAllNow(reason="manual"){
-    const updatedAt = Date.now();
-
-    // guardar local SIEMPRE
-    const localSnap = { savedAt: updatedAt, texts: getTexts(), state: getStatePayload() };
-    writeLocal(localSnap);
-
-    setSyncBadge("Sync: guardando…", true);
-
+  function saveNow(){
     try{
-      const statePayload = getStatePayload();
-      statePayload.clientUpdatedAt = updatedAt;
-      lastStateWrite = updatedAt;
-
-      await setDoc(hojaRef, { ...statePayload, updatedAt: serverTimestamp() }, { merge:true });
-
-      // texts chunked
-      const texts = getTexts();
-      lastTextsWrite = updatedAt;
-      await saveTextsChunked(texts, updatedAt);
-
-      setSyncBadge("Sync: OK (guardado)", true);
+      const payload = buildPayload();
+      localStorage.setItem(KEY, JSON.stringify(payload));
+      setBadge("Persistencia: OK (local guardado)");
     }catch(e){
-      console.warn(e);
-      setSyncBadge("Sync: ERROR (ver consola)", false);
+      console.warn("No se pudo guardar localStorage:", e);
+      setBadge("Persistencia: ERROR (ver consola)", false);
     }
   }
 
-  function scheduleSave(){
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(()=>saveAllNow("auto"), 700);
-  }
+  function load(){
+    try{
+      const raw = localStorage.getItem(KEY);
+      if(!raw){ setBadge("Persistencia: local vacía"); return; }
+      const payload = JSON.parse(raw);
 
-  document.getElementById("forceSave")?.addEventListener("click", ()=>saveAllNow("force"));
+      // 1) Textos
+      if(payload?.texts){
+        if(typeof payload.texts.plText==="string") document.getElementById("plInput").value = payload.texts.plText;
+        if(typeof payload.texts.resText==="string") document.getElementById("resInput").value = payload.texts.resText;
+        if(typeof payload.texts.bulkText==="string") document.getElementById("bulkInput").value = payload.texts.bulkText;
+      }
 
-  // Guardar cuando se escriben textos
-  ["plInput","resInput","bulkInput"].forEach(id=>{
-    const el=document.getElementById(id);
-    if(!el) return;
-    el.addEventListener("input", scheduleSave);
-  });
-
-  // Guardar qty/lotes/pestañas
-  document.addEventListener("input",(ev)=>{
-    const el=ev.target;
-    if(el && el.matches('input[data-role="qty"]')) scheduleSave();
-  });
-  ["p1CopyPending","p2CopyPending","p3CopyPending",
-   "p1BatchSelect","p2BatchSelect","p3BatchSelect",
-   "p1CopyBatch","p2CopyBatch","p3CopyBatch",
-   "process"
-  ].forEach(id=>{
-    const el=document.getElementById(id);
-    if(!el) return;
-    el.addEventListener("click", ()=>setTimeout(scheduleSave, 50));
-    el.addEventListener("change", ()=>setTimeout(scheduleSave, 50));
-  });
-
-  // ===== Restauración al cargar: primero LOCAL, luego NUBE
-  async function restoreOnLoad(){
-    // 1) Local inmediato
-    const local = readLocal();
-    if(local?.texts){
-      setTexts(local.texts);
+      // 2) Si hay data, recalcular para reconstruir moves/tablas
       const hasAny = (document.getElementById("plInput").value.trim() ||
                       document.getElementById("resInput").value.trim() ||
                       document.getElementById("bulkInput").value.trim());
       if(hasAny){
-        try{ processPreserve(); }catch(e){}
+        try{ window.process(); }catch(e){}
       }
-      if(local?.state){
-        STATE.qtyById = objectToMap(local.state.qtyById);
-        if(local.state.batchesByPanel) STATE.batchesByPanel = local.state.batchesByPanel;
-        if(local.state.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = local.state.selectedBatchIdByPanel;
-        if(local.state.activeSubByPanel) STATE.activeSubByPanel = local.state.activeSubByPanel;
-        refreshAllTables();
+
+      // 3) Restaurar avance (qty, lotes, pestañas)
+      if(window.STATE && payload?.data){
+        STATE.qtyById = objToMap(payload.data.qtyById);
+        if(payload.data.batchesByPanel) STATE.batchesByPanel = payload.data.batchesByPanel;
       }
-      setSyncBadge("Sync: local OK (cargando nube…)", true);
-    }else{
-      setSyncBadge("Sync: cargando nube…", true);
+      if(window.STATE && payload?.ui){
+        if(payload.ui.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = payload.ui.selectedBatchIdByPanel;
+        if(payload.ui.activeSubByPanel) STATE.activeSubByPanel = payload.ui.activeSubByPanel;
+      }
+
+      // Refrescar UI con el avance
+      if(typeof window.refreshAllTables === "function") refreshAllTables();
+
+      // Mantener panel/sub local
+      const panel = payload?.ui?.activePanel || "p1";
+      if(typeof window.setActivePanel === "function") setActivePanel(panel);
+      if(typeof window.setActiveSub === "function"){
+        const sub = (STATE.activeSubByPanel && STATE.activeSubByPanel[panel]) ? STATE.activeSubByPanel[panel] : (panel+"-report");
+        setActiveSub(panel, sub);
+      }
+
+      setBadge("Persistencia: OK (local cargado)");
+    }catch(e){
+      console.warn("No se pudo cargar localStorage:", e);
+      setBadge("Persistencia: ERROR (local)", false);
     }
-
-    // 2) Nube (aplica si es más nueva)
-    const {texts, meta} = await fetchTextsFromChunks().catch(()=>({texts:null, meta:null}));
-    const stateSnap = await (await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js")).getDoc(hojaRef).catch(()=>null);
-    const state = (stateSnap && stateSnap.exists()) ? (stateSnap.data()||{}) : null;
-
-    const cloudTextsTs = meta?.clientUpdatedAt || 0;
-    const cloudStateTs = state?.clientUpdatedAt || 0;
-    const localTs = local?.savedAt || 0;
-
-    // Si nube es más nueva que local, aplica (pero sin pisar si el usuario está tecleando)
-    const cloudNewer = Math.max(cloudTextsTs, cloudStateTs) > localTs;
-
-    if(cloudNewer && (texts || state)){
-      if(isTyping){
-        pendingRemote = {texts, state};
-        showApplyButton(true);
-        setSyncBadge("Sync: hay nueva data en nube (sin pisar) · usa ↻", true);
-      }else{
-        pendingRemote = {texts, state};
-        applyRemoteNow();
-      }
-    }else{
-      setSyncBadge("Sync: OK", true);
-    }
-
-    // listeners para cambios de nube (meta + state)
-    onSnapshot(textsMeta, async (snap)=>{
-      if(!snap.exists()) return;
-      const m=snap.data()||{};
-      if(m.clientId===CLIENT_ID && m.clientUpdatedAt===lastTextsWrite) return;
-
-      const {texts} = await fetchTextsFromChunks().catch(()=>({texts:null}));
-      if(!texts) return;
-
-      if(isTyping){
-        pendingRemote = {...(pendingRemote||{}), texts};
-        showApplyButton(true);
-        setSyncBadge("Sync: nueva data nube (textos) · usa ↻", true);
-      }else{
-        pendingRemote = {...(pendingRemote||{}), texts};
-        applyRemoteNow();
-      }
-    });
-
-    onSnapshot(hojaRef, (snap)=>{
-      if(!snap.exists()) return;
-      const d=snap.data()||{};
-      if(d.clientId===CLIENT_ID && d.clientUpdatedAt===lastStateWrite) return;
-
-      if(isTyping){
-        pendingRemote = {...(pendingRemote||{}), state:d};
-        showApplyButton(true);
-        setSyncBadge("Sync: nueva data nube (estado) · usa ↻", true);
-      }else{
-        pendingRemote = {...(pendingRemote||{}), state:d};
-        applyRemoteNow();
-      }
-    });
   }
 
-  // ===== Limpiar hoja GLOBAL: borra nube + local
-  window.limpiarHoja = async function(){
-    const ok = confirm("¿Seguro que deseas LIMPIAR LA HOJA GLOBAL? Esto borra para TODOS.");
-    if(!ok) return;
-    setSyncBadge("Sync: limpiando…", true);
+  // Debounce guardado
+  let t=null;
+  function schedule(){
+    clearTimeout(t);
+    t=setTimeout(saveNow, 450);
+  }
 
-    try{
-      // borrar chunks
-      const snap = await getDocs(textsChunksCol);
-      const batch = writeBatch(db);
-      snap.forEach(d=>batch.delete(d.ref));
-      batch.set(textsMeta, {version:10, clientId: CLIENT_ID, clientUpdatedAt: Date.now(), plCount:0,resCount:0,bulkCount:0, updatedAt: serverTimestamp()}, {merge:true});
-      batch.set(hojaRef, {
-        version:10, clientId: CLIENT_ID, clientUpdatedAt: Date.now(),
-        qtyById:{}, batchesByPanel:{p1:[],p2:[],p3:[]},
-        selectedBatchIdByPanel:{p1:null,p2:null,p3:null},
-        p2:"p2-report",p3:"p3-report"},
-        updatedAt: serverTimestamp()
-      }, {merge:true});
-      await batch.commit();
+  // Hooks: textos
+  ["plInput","resInput","bulkInput"].forEach(id=>{
+    const el=document.getElementById(id);
+    if(!el) return;
+    el.addEventListener("input", schedule);
+  });
 
-      // local
-      try{ localStorage.removeItem(LS_KEY); }catch(e){}
+  // Hooks: qty digitada
+  document.addEventListener("input",(ev)=>{
+    const el=ev.target;
+    if(el && el.matches('input[data-role="qty"]')) schedule();
+  });
 
-      // aplicar UI
-      document.getElementById("plInput").value="";
-      document.getElementById("resInput").value="";
-      document.getElementById("bulkInput").value="";
-      STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
-      STATE.qtyById=new Map();
-      STATE.batchesByPanel={p1:[],p2:[],p3:[]};
-      STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
-      STATE.moveById=new Map();
-      refreshAllTables();
+  // Hooks: acciones relevantes (procesar, crear lote, selects)
+  ["process","p1CopyPending","p2CopyPending","p3CopyPending","p1BatchSelect","p2BatchSelect","p3BatchSelect"].forEach(id=>{
+    const el=document.getElementById(id);
+    if(!el) return;
+    el.addEventListener("click", ()=>setTimeout(schedule, 80));
+    el.addEventListener("change", ()=>setTimeout(schedule, 80));
+  });
 
-      setSyncBadge("Sync: OK (limpio)", true);
-    }catch(e){
-      console.warn(e);
-      setSyncBadge("Sync: ERROR (limpieza)", false);
-    }
-  };
+  // Botón manual si existe
+  const force=document.getElementById("forceSave");
+  if(force) force.addEventListener("click", saveNow);
 
-  // Guardar antes de salir (best-effort)
-  window.addEventListener("beforeunload", ()=>{ try{ writeLocal({savedAt:Date.now(), texts:getTexts(), state:getStatePayload()}); }catch(e){} });
+  // Guardar antes de cerrar
+  window.addEventListener("beforeunload", saveNow);
 
-  // GO
-  restoreOnLoad();
-  setSyncBadge("Sync: iniciando…", true);
+  // Primera carga
+  load();
+
+})();
 </script>
 </body>
 </html>
