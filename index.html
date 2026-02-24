@@ -1479,14 +1479,15 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
 </script>
 
 <script type="module">
-  // ===== Firebase (Firestore) Sync — MODO ONLINE SIN PISADAS =====
-  // ✅ Compartimos SOLO el estado operativo (qty/lotes/tabs).
-  // ❌ NO compartimos los 3 textareas (PL/Reservado/Bulk) para que no se borre lo que escriben.
+  // ===== Firebase (Firestore) Sync =====
+  // Modo ONLINE (1 solo link) SIN pisadas al escribir:
+  // - NO se sincronizan los textareas (PL/Reservado/Bulk).
+  // - SOLO se sincroniza estado operativo: qty digitado, lotes, selección de lote.
+  // Así nadie “borra” lo que otro está tecleando.
 
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
   import { getFirestore, doc, onSnapshot, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-  // === Tu configuración Firebase ===
   const firebaseConfig = {
     apiKey: "AIzaSyDdXF24bG8QL22a8lkHeHd4ToNq5qDdAI4",
     authDomain: "oriflame-ops-hub.firebaseapp.com",
@@ -1499,10 +1500,10 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
 
-  // ✅ Documento ÚNICO compartido por todos
-  const hojaRef = doc(db, "appState", "hoja");
+  // Sala única para todos
+  const ROOM_ID = "global";
+  const hojaRef = doc(db, "opsHubRooms", ROOM_ID, "appState", "hoja");
 
-  // Identidad del cliente (para evitar eco: "yo guardé → me llega snapshot")
   const CLIENT_ID = (() => {
     try {
       const k = "opsHubClientId";
@@ -1553,8 +1554,7 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
       qtyById: snapshotToPlainObjectMap(STATE.qtyById),
       batchesByPanel: STATE.batchesByPanel || {p1:[],p2:[],p3:[]},
       selectedBatchIdByPanel: STATE.selectedBatchIdByPanel || {p1:null,p2:null,p3:null},
-      activePanel: STATE.activePanel || "p1",
-      activeSubByPanel: STATE.activeSubByPanel || {p1:"p1-report",p2:"p2-report",p3:"p3-report"}
+      // Importante: NO sincronizamos activePanel/pestañas para que no “regrese solo”
     };
   }
 
@@ -1562,13 +1562,13 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     if (isApplyingRemote) return;
     setSyncBadge("Sync: guardando…", true);
     clearTimeout(saveTimer);
+
     saveTimer = setTimeout(async () => {
       try {
-        const statePayload = getStatePayload();
-        lastLocalWriteState = statePayload.clientUpdatedAt;
-
-        await setDoc(hojaRef, { ...statePayload, updatedAt: serverTimestamp() }, { merge: true });
-        setSyncBadge("Sync: OK (guardado)", true);
+        const payload = getStatePayload();
+        lastLocalWriteState = payload.clientUpdatedAt;
+        await setDoc(hojaRef, { ...payload, updatedAt: serverTimestamp() }, { merge: true });
+        setSyncBadge("Sync: OK", true);
       } catch(e) {
         console.warn("No se pudo guardar en Firebase:", e);
         setSyncBadge("Sync: ERROR (ver consola)", false);
@@ -1576,36 +1576,41 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     }, 250);
   }
 
-  // ✅ Limpieza compartida: borra estado de TODOS. (Los textareas NO se comparten, así que no los tocamos aquí.)
+  // Limpieza global del estado (no borra textareas locales)
   window.limpiarHoja = async function () {
-    const ok = confirm("¿Seguro que deseas LIMPIAR LA HOJA GLOBAL? Esto afecta a TODOS (pendientes/lotes).");
+    const ok = confirm("¿Seguro que deseas LIMPIAR LA HOJA? Esto se borrará para TODOS.");
     if(!ok) return;
 
     const now = Date.now();
     lastLocalWriteState = now;
 
-    const statePayload = {
+    const payload = {
       version: 4,
       clientId: CLIENT_ID,
       clientUpdatedAt: now,
       qtyById: {},
       batchesByPanel: {p1:[],p2:[],p3:[]},
       selectedBatchIdByPanel: {p1:null,p2:null,p3:null},
-      activePanel: "p1",
-      activeSubByPanel: {p1:"p1-report",p2:"p2-report",p3:"p3-report"},
       updatedAt: serverTimestamp()
     };
 
     try {
-      await setDoc(hojaRef, statePayload, { merge: true });
+      await setDoc(hojaRef, payload, { merge: true });
       setSyncBadge("Sync: OK (limpio)", true);
     } catch(e) {
       console.warn("No se pudo limpiar en Firebase:", e);
       setSyncBadge("Sync: ERROR (limpieza)", false);
     }
+
+    // Aplicar local
+    isApplyingRemote = true;
+    STATE.qtyById = new Map();
+    STATE.batchesByPanel = {p1:[],p2:[],p3:[]};
+    STATE.selectedBatchIdByPanel = {p1:null,p2:null,p3:null};
+    refreshAllTables();
+    isApplyingRemote = false;
   };
 
-  // ===== Listener: Estado operativo compartido =====
   onSnapshot(hojaRef, (snap) => {
     if (!snap.exists()) {
       setSyncBadge("Sync: listo (sin estado previo)", true);
@@ -1621,37 +1626,30 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     STATE.qtyById = objectToMap(data.qtyById);
     if (data.batchesByPanel) STATE.batchesByPanel = data.batchesByPanel;
     if (data.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = data.selectedBatchIdByPanel;
-    if (data.activeSubByPanel) STATE.activeSubByPanel = data.activeSubByPanel;
 
     refreshAllTables();
-
-    const panel = data.activePanel || "p1";
-    setActivePanel(panel);
-    setActiveSub(panel, (STATE.activeSubByPanel && STATE.activeSubByPanel[panel]) ? STATE.activeSubByPanel[panel] : (panel+"-report"));
 
     isApplyingRemote = false;
     setSyncBadge("Sync: OK (actualizado)", true);
   });
 
-  // ===== Hooks para guardar =====
-  // Guardar cambios de qty (pendientes)
+  // Guardar cambios de qty
   document.addEventListener("input", (ev) => {
     const el = ev.target;
     if (el && el.matches('input[data-role="qty"]')) scheduleSave();
   });
 
-  // Guardar cuando se crean lotes / cambian lotes / se procesa
-  ["p1CopyPending","p2CopyPending","p3CopyPending","process",
+  // Guardar cuando se crean lotes o cambian selectores
+  ["p1CopyPending","p2CopyPending","p3CopyPending",
    "p1BatchSelect","p2BatchSelect","p3BatchSelect"
   ].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
-    el.addEventListener("click", () => setTimeout(scheduleSave, 60));
-    el.addEventListener("change", () => setTimeout(scheduleSave, 60));
+    el.addEventListener("click", () => setTimeout(scheduleSave, 80));
+    el.addEventListener("change", () => setTimeout(scheduleSave, 80));
   });
 
-  setSyncBadge("Sync: listo · online (sin pisadas)", true);
+  setSyncBadge("Sync: listo · modo GLOBAL (sin pisadas)", true);
 </script>
-
 </body>
 </html>
