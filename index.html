@@ -315,7 +315,7 @@
   <header>
     <div class="wrap brand">
       <div class="brand-left">
-        <div class="capsule">ORIFLAME · Operaciones</div>
+        <div class="capsule">ORIFLAME · Operaciones</div><div style="margin-top:6px;font-size:11px;color:#475569;">Build: colab-chunks-debug-2026-02-24</div>
         <div id="syncBadge" style="margin-top:6px;font-size:12px;color:#0f5132;background:#d1e7dd;border:1px solid #badbcc;padding:6px 10px;border-radius:10px;display:inline-block;">Sync: esperando…</div>
         <div class="hero">
           <h1>Reporte a PL</h1>
@@ -1339,7 +1339,7 @@ th,td{padding:8px 7px;border-bottom:2px solid #bfeee5;text-align:left;}
 th{text-transform:uppercase;letter-spacing:.06em;color:#475569;font-size:11px;border-bottom:2px solid #9adfd4;}
 @media print{body{margin:0;}}
 </style></head><body>
-<div class="capsule">ORIFLAME · Operaciones</div>
+<div class="capsule">ORIFLAME · Operaciones</div><div style="margin-top:6px;font-size:11px;color:#475569;">Build: colab-chunks-debug-2026-02-24</div>
 <h1>Trabajo del día</h1>
 <div class="sub">${dateStr}</div>
 <table><thead><tr>
@@ -1686,7 +1686,7 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
         setSyncBadge("Sync: OK (guardado)", true);
       }catch(e){
         console.warn(e);
-        setSyncBadge("Sync: ERROR (ver consola)", false);
+        setSyncBadge("Sync: ERROR (debug)", false);
       }
     }, 550);
   }
@@ -1821,6 +1821,21 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
   };
 
   ensureRemoteBanner();
+
+  // ===== PROBE: test de permisos / conexión (no afecta el uso) =====
+  async function firebaseProbe(){
+    try{
+      const probeRef = doc(db, "opsHubRooms", ROOM_ID, "state", "probe");
+      await setDoc(probeRef, { t: Date.now(), clientId: CLIENT_ID }, { merge:true });
+      console.log("Firebase probe OK");
+    }catch(e){
+      console.warn("Firebase probe ERROR:", e?.code, e?.message, e);
+      setSyncBadge("Sync: ERROR (" + (e?.code || "sin_codigo") + ")", false);
+    }
+  }
+  // Ejecutar probe al iniciar
+  firebaseProbe();
+
   setSyncBadge("Sync: OK (listo)", true);
 </script>
 
