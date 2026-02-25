@@ -313,30 +313,18 @@
         border: 1px solid #9adfd4 !important;
       }
     }
-  
-    .syncbar{
-      display:inline-block;
-      margin-top:8px;
-      padding:8px 12px;
-      border-radius:12px;
-      font-weight:700;
-      font-size:12px;
-      border:1px solid rgba(0,0,0,.08);
-      background:#e6f6ef;
-      color:#0f5132;
-    }
-    .syncbar.warn{ background:#fff3cd; color:#664d03; }
-    .syncbar.err{ background:#f8d7da; color:#842029; }
-
-</style>
+  </style>
 </head>
 
 <body>
+  <div id="syncBanner" style="max-width:1100px;margin:10px auto 0 auto;padding:8px 12px;border-radius:10px;font:600 13px/1.2 Inter,system-ui,Segoe UI,Arial;color:#0f4d4d;background:#dff3ee;border:1px solid #bfe5dd;display:none;">
+    Sync: listo
+  </div>
+
   <header>
     <div class="wrap brand">
       <div class="brand-left">
         <div class="capsule">ORIFLAME · Operaciones</div>
-      <div id="syncStatus" class="syncbar">Sync: listo</div>
         <div class="hero">
           <h1>Reporte a PL</h1>
           <div class="sub">Nivel 1 vs Nivel 2+ vs Zona Air/CW</div>
@@ -1368,7 +1356,6 @@ th{text-transform:uppercase;letter-spacing:.06em;color:#475569;font-size:11px;bo
 @media print{body{margin:0;}}
 </style></head><body>
 <div class="capsule">ORIFLAME · Operaciones</div>
-      <div id="syncStatus" class="syncbar">Sync: listo</div>
 <h1>Trabajo del día</h1>
 <div class="sub">${dateStr}</div>
 <table><thead><tr>
@@ -1413,29 +1400,9 @@ function printDayReport(){
 document.getElementById("process").addEventListener("click",process);
 document.getElementById("clearAll").addEventListener("click",()=>{
   if(!confirm("¿Seguro que deseas limpiar todo?")) return;
-
-  // Limpia inputs
   document.getElementById("plInput").value="";
   document.getElementById("resInput").value="";
   document.getElementById("bulkInput").value="";
-
-  // Limpia estado / tablas
-  try{
-    STATE.qtyById = new Map();
-    STATE.batchesByPanel = { p1:[], p2:[], p3:[] };
-    STATE.selectedBatchIdByPanel = { p1:null, p2:null, p3:null };
-    STATE.activePanel = "p1";
-    STATE.activeSubByPanel = { p1:"report", p2:"report", p3:"report" };
-    STATE.reportByPanel = { p1:[], p2:[], p3:[] };
-    STATE.pendingByPanel = { p1:[], p2:[], p3:[] };
-  }catch(e){}
-
-  // Borra persistencia local
-  try{ localStorage.removeItem(STORAGE_KEY); }catch(e){}
-  setSync("Sync: limpio", "warn");
-
-  // Re-render vacío si existe el motor
-  try{ if(typeof renderAll==="function") renderAll(); }catch(e){}
 });
 
 document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>setActivePanel(t.dataset.panel)));
@@ -1512,181 +1479,249 @@ document.querySelectorAll('button[data-print]').forEach(b=>{
 });
 document.getElementById("downloadDay").addEventListener("click",downloadDayHTML);
 document.getElementById("printDay").addEventListener("click",printDayReport);
+</script>
 
-/* =======================
-   PERSISTENCIA LOCAL (NO SE PIERDE AL RECARGAR)
-   - Se guarda en localStorage del navegador (misma PC)
-   - Solo se borra con el botón "Limpiar"
-   ======================= */
-const STORAGE_KEY = "oriflame_ops_hub_reporte_bulk__v3";
-
-function setSync(text, level){
-  const el = document.getElementById("syncStatus");
-  if(!el) return;
-  el.classList.remove("warn","err");
-  if(level==="warn") el.classList.add("warn");
-  if(level==="err") el.classList.add("err");
-  el.textContent = text;
-}
-
-function debounce(fn, wait){
-  let t=null;
-  return (...args)=>{
-    clearTimeout(t);
-    t=setTimeout(()=>fn(...args), wait);
-  };
-}
-
-function serializeState(){
-  // Nota: Maps no se serializan directo, se convierten a arrays
-  const safe = {};
-  safe.ts = Date.now();
-  safe.inputs = {
-    pl: document.getElementById("plInput")?.value ?? "",
-    res: document.getElementById("resInput")?.value ?? "",
-    bulk: document.getElementById("bulkInput")?.value ?? ""
+<script>
+/** Persistencia local (sin Firebase): guarda TODO el estado del reporte para que sobreviva a recargas/cierres.
+ *  - Se borra SOLO con el botón "Limpiar" (id="clearAll")
+ *  - Usa IndexedDB (sin límite práctico tipo localStorage)
+ */
+(function(){
+  const BANNER = ()=>document.getElementById('syncBanner');
+  const show = (msg, type)=>{
+    const el=BANNER(); if(!el) return;
+    el.style.display='block';
+    el.textContent = msg;
+    if(type==='err'){ el.style.background='#f8d7da'; el.style.borderColor='#f5c2c7'; el.style.color='#842029'; }
+    else { el.style.background='#dff3ee'; el.style.borderColor='#bfe5dd'; el.style.color='#0f4d4d'; }
   };
 
-  try{
-    safe.state = {
-      activePanel: STATE.activePanel,
-      activeSubByPanel: STATE.activeSubByPanel,
-      selectedBatchIdByPanel: STATE.selectedBatchIdByPanel,
-      qtyById: Array.from(STATE.qtyById?.entries?.() ?? []),
-      batchesByPanel: STATE.batchesByPanel ?? {p1:[],p2:[],p3:[]}
+  const DB_NAME='oriflame_ops_hub';
+  const STORE='reporte_pl';
+  const KEY='state_v1';
+
+  function openDB(){
+    return new Promise((resolve,reject)=>{
+      const req=indexedDB.open(DB_NAME,1);
+      req.onupgradeneeded=()=>{ req.result.createObjectStore(STORE); };
+      req.onsuccess=()=>resolve(req.result);
+      req.onerror=()=>reject(req.error);
+    });
+  }
+  async function idbGet(key){
+    const db=await openDB();
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readonly');
+      const st=tx.objectStore(STORE);
+      const r=st.get(key);
+      r.onsuccess=()=>resolve(r.result);
+      r.onerror=()=>reject(r.error);
+    });
+  }
+  async function idbPut(key,val){
+    const db=await openDB();
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite');
+      tx.oncomplete=()=>resolve(true);
+      tx.onerror=()=>reject(tx.error);
+      tx.objectStore(STORE).put(val,key);
+    });
+  }
+  async function idbDel(key){
+    const db=await openDB();
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction(STORE,'readwrite');
+      tx.oncomplete=()=>resolve(true);
+      tx.onerror=()=>reject(tx.error);
+      tx.objectStore(STORE).delete(key);
+    });
+  }
+
+  // Convierte Maps a arrays y viceversa
+  function packMap(m){ return Array.from((m instanceof Map)?m.entries():[]); }
+  function unpackMap(arr){ return new Map(Array.isArray(arr)?arr:[]); }
+
+  function safeCloneState(){
+    // Si el HTML original aún no cargó STATE, no guardamos.
+    if(typeof STATE==='undefined') return null;
+
+    return {
+      version: 1,
+      savedAt: Date.now(),
+      inputs: {
+        pl: (document.getElementById('plInput')||{}).value || '',
+        res: (document.getElementById('resInput')||{}).value || '',
+        bulk: (document.getElementById('bulkInput')||{}).value || ''
+      },
+      ui: {
+        activePanel: STATE.activePanel,
+        activeSubByPanel: STATE.activeSubByPanel,
+      },
+      state: {
+        p1: STATE.p1,
+        p2: STATE.p2,
+        p3: STATE.p3,
+        qtyById: packMap(STATE.qtyById),
+        plLocByCode: packMap(STATE.plLocByCode),
+        moveById: packMap(STATE.moveById),
+        dayById: packMap(STATE.dayById),
+        batchesByPanel: STATE.batchesByPanel,
+        selectedBatchIdByPanel: STATE.selectedBatchIdByPanel,
+      }
     };
-  }catch(e){
-    safe.state = null;
   }
-  return safe;
-}
 
-function applySaved(saved){
-  if(!saved) return;
+  function restoreToState(payload){
+    if(!payload || typeof STATE==='undefined') return;
 
-  // Restaura inputs (fuente)
-  const plEl = document.getElementById("plInput");
-  const resEl = document.getElementById("resInput");
-  const bulkEl = document.getElementById("bulkInput");
-  if(plEl) plEl.value = saved.inputs?.pl ?? "";
-  if(resEl) resEl.value = saved.inputs?.res ?? "";
-  if(bulkEl) bulkEl.value = saved.inputs?.bulk ?? "";
+    // Inputs
+    const pl=document.getElementById('plInput'); if(pl) pl.value = payload.inputs?.pl ?? '';
+    const rs=document.getElementById('resInput'); if(rs) rs.value = payload.inputs?.res ?? '';
+    const bk=document.getElementById('bulkInput'); if(bk) bk.value = payload.inputs?.bulk ?? '';
 
-  // Si hay data, re-procesa para reconstruir el reporte
-  const hasAny = (plEl?.value||"").trim() || (resEl?.value||"").trim() || (bulkEl?.value||"").trim();
-  if(hasAny){
+    // Core STATE
+    if(payload.state){
+      STATE.p1 = payload.state.p1 || STATE.p1;
+      STATE.p2 = payload.state.p2 || STATE.p2;
+      STATE.p3 = payload.state.p3 || STATE.p3;
+      STATE.qtyById = unpackMap(payload.state.qtyById);
+      STATE.plLocByCode = unpackMap(payload.state.plLocByCode);
+      STATE.moveById = unpackMap(payload.state.moveById);
+      STATE.dayById = unpackMap(payload.state.dayById);
+      STATE.batchesByPanel = payload.state.batchesByPanel || STATE.batchesByPanel;
+      STATE.selectedBatchIdByPanel = payload.state.selectedBatchIdByPanel || STATE.selectedBatchIdByPanel;
+    }
+
+    // UI
+    if(payload.ui){
+      STATE.activeSubByPanel = payload.ui.activeSubByPanel || STATE.activeSubByPanel;
+      const panel = payload.ui.activePanel || STATE.activePanel || 'p1';
+      if(typeof setActivePanel==='function') setActivePanel(panel);
+      else STATE.activePanel = panel;
+    }
+
+    // Re-render usando funciones originales
     try{
-      if(typeof process==="function") process();
-    }catch(e){}
+      if(typeof updatePendingTable==='function'){
+        updatePendingTable(STATE.p1);
+        updatePendingTable(STATE.p2);
+        updatePendingTable(STATE.p3);
+      }
+      if(typeof renderSelectedBatch==='function'){
+        renderSelectedBatch(STATE.p1);
+        renderSelectedBatch(STATE.p2);
+        renderSelectedBatch(STATE.p3);
+      }
+      if(typeof updateDayButtons==='function'){
+        updateDayButtons();
+      }
+      if(typeof updateKPI==='function'){
+        updateKPI(STATE.p1, STATE.p1.kpiId);
+        updateKPI(STATE.p2, STATE.p2.kpiId);
+        updateKPI(STATE.p3, STATE.p3.kpiId);
+      }
+      if(typeof updatePendingLabels==='function'){
+        updatePendingLabels();
+      }
+    }catch(e){
+      console.error('Restore render error',e);
+    }
   }
 
-  // Restaura estado operacional (QTY / lotes / tabs)
-  try{
-    const st = saved.state;
-    if(st){
-      if(st.qtyById) STATE.qtyById = new Map(st.qtyById);
-      if(st.batchesByPanel) STATE.batchesByPanel = st.batchesByPanel;
-      if(st.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = st.selectedBatchIdByPanel;
-      if(st.activeSubByPanel) STATE.activeSubByPanel = st.activeSubByPanel;
-      if(st.activePanel) STATE.activePanel = st.activePanel;
-    }
-
-    // Re-render de UI si existen funciones
-    if(typeof renderAll==="function") renderAll();
-    if(typeof setActivePanel==="function") setActivePanel(STATE.activePanel || "p1");
-    if(typeof setActiveSub==="function"){
-      ["p1","p2","p3"].forEach(p=>{
-        const sub = (STATE.activeSubByPanel && STATE.activeSubByPanel[p]) ? STATE.activeSubByPanel[p] : "report";
-        setActiveSub(p, sub);
-      });
-    }
-    if(typeof renderSelectedBatch==="function"){
-      ["p1","p2","p3"].forEach(p=>renderSelectedBatch(p));
-    }
-  }catch(e){}
-}
-
-function saveNow(){
-  try{
-    const payload = serializeState();
-    const json = JSON.stringify(payload);
-    localStorage.setItem(STORAGE_KEY, json);
-    setSync("Sync: OK (guardado)", "ok");
-  }catch(e){
-    console.error("Persistencia: error guardando", e);
-    setSync("Sync: ERROR (ver consola)", "err");
+  // Guardado debounced
+  let t=null;
+  async function scheduleSave(reason){
+    clearTimeout(t);
+    t=setTimeout(async ()=>{
+      try{
+        const payload=safeCloneState();
+        if(!payload) return;
+        await idbPut(KEY, payload);
+        show('Sync: guardado', 'ok');
+      }catch(err){
+        console.error('Sync save error',err);
+        show('Sync: ERROR (ver consola)', 'err');
+      }
+    }, 250);
   }
-}
-const saveSoon = debounce(saveNow, 450);
 
-// Guarda cuando cambias los 3 inputs
-["plInput","resInput","bulkInput"].forEach(id=>{
-  const el = document.getElementById(id);
-  if(!el) return;
-  el.addEventListener("input", ()=>{
-    setSync("Sync: editando…", "warn");
-    saveSoon();
-  });
-});
-
-// Guarda cuando cambias QTY (inputs generados dinámicamente)
-document.addEventListener("input", (e)=>{
-  const t = e.target;
-  if(t && t.getAttribute && t.getAttribute("data-role")==="qty"){
-    setSync("Sync: editando…", "warn");
-    saveSoon();
-  }
-});
-
-// Guarda en cambios típicos (lotes, selects)
-document.addEventListener("change", (e)=>{
-  const t = e.target;
-  if(!t) return;
-  // Solo algunos elementos (select de lote, etc.)
-  if(t.id && (t.id.includes("BatchSelect") || t.id.includes("batchSelect"))){
-    setSync("Sync: editando…", "warn");
-    saveSoon();
-  }
-});
-
-
-// Al procesar, guarda (sin tocar tu función original)
-try{
-  const btn = document.getElementById("process");
-  if(btn) btn.addEventListener("click", ()=> setTimeout(()=>{ setSync("Sync: OK (guardado)","ok"); saveNow(); }, 0));
-}catch(e){}
-
-// Hook: después de copiar / crear lote, guarda (si existen handlers globales)
-["handleCopyPending","handleCopyBatch","createBatchFromPending"].forEach(fn=>{
-  try{
-    if(typeof window[fn] === "function"){
-      const orig = window[fn];
-      window[fn] = function(){
-        const r = orig.apply(this, arguments);
-        setTimeout(()=>{ setSync("Sync: OK (guardado)","ok"); saveNow(); }, 0);
-        return r;
-      };
+  async function loadOnce(){
+    try{
+      const payload=await idbGet(KEY);
+      if(payload){
+        restoreToState(payload);
+        show('Sync: restaurado', 'ok');
+        setTimeout(()=>show('Sync: listo','ok'), 1200);
+      }else{
+        show('Sync: listo', 'ok');
+      }
+    }catch(err){
+      console.error('Sync load error',err);
+      show('Sync: ERROR (ver consola)', 'err');
     }
-  }catch(e){}
-});
-
-// Restore al cargar
-window.addEventListener("DOMContentLoaded", ()=>{
-  try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(!raw){
-      setSync("Sync: listo", "ok");
-      return;
-    }
-    const saved = JSON.parse(raw);
-    applySaved(saved);
-    setSync("Sync: restaurado ✅", "ok");
-  }catch(e){
-    console.error("Persistencia: error restaurando", e);
-    setSync("Sync: ERROR (ver consola)", "err");
   }
-});
 
+  // Hook a eventos típicos (inputs + cambios en qty)
+  function wire(){
+    ['plInput','resInput','bulkInput'].forEach(id=>{
+      const el=document.getElementById(id);
+      if(el) el.addEventListener('input', ()=>scheduleSave('input:'+id));
+    });
+
+    // Captura cambios de QTY dentro de la tabla (delegación)
+    document.addEventListener('input', (e)=>{
+      const t=e.target;
+      if(!t) return;
+      if(t.matches && (t.matches('input[type="number"]') || t.matches('input.qty') || t.classList.contains('qty'))){
+        scheduleSave('qty');
+      }
+    }, true);
+
+    // También cada 10s por si alguna función cambia STATE sin input directo
+    setInterval(()=>scheduleSave('interval'), 10000);
+
+    // Guardar al cerrar / recargar
+    window.addEventListener('beforeunload', ()=>{ scheduleSave('beforeunload'); });
+  }
+
+  // Limpiar: además de limpiar UI, borramos IDB
+  function hookClear(){
+    const btn=document.getElementById('clearAll');
+    if(!btn) return;
+    btn.addEventListener('click', async ()=>{
+      try{
+        await idbDel(KEY);
+        show('Sync: borrado', 'ok');
+        setTimeout(()=>show('Sync: listo','ok'), 1200);
+      }catch(err){
+        console.error('Sync delete error',err);
+        show('Sync: ERROR (ver consola)', 'err');
+      }
+    }, true);
+  }
+
+  // arranque (espera a que el script original defina STATE)
+  function start(){
+    let tries=0;
+    const iv=setInterval(async ()=>{
+      tries++;
+      if(typeof STATE!=='undefined'){
+        clearInterval(iv);
+        wire();
+        hookClear();
+        await loadOnce();
+        // primer guardado suave para "capturar" si había algo
+        scheduleSave('startup');
+      }
+      if(tries>80){ // ~8s
+        clearInterval(iv);
+        show('Sync: ERROR (STATE no disponible)', 'err');
+      }
+    }, 100);
+  }
+
+  start();
+})();
 </script>
 </body>
 </html>
