@@ -1362,168 +1362,6 @@ th{text-transform:uppercase;letter-spacing:.06em;color:#475569;font-size:11px;bo
 <th style="width:70px;">Panel</th>
 <th style="width:240px;">Lote</th>
 </tr></thead><tbody>${tableRows}</tbody></table>
-
-<script>
-/* ===== Persistencia LOCAL (sin Firebase) =====
-   - Guarda en esta PC (localStorage).
-   - No cambia UI ni funciones de impresión/lotes.
-   - Solo se borra todo con "Limpiar".
-*/
-(function(){
-  const LS_KEY = "oriflame_ops_hub_local_v1";
-  let saveTimer = null;
-
-  function mapToObj(m){
-    const o={};
-    if(!m || typeof m.entries!=="function") return o;
-    for(const [k,v] of m.entries()) o[k]=v;
-    return o;
-  }
-  function objToMap(o){
-    const m=new Map();
-    if(!o || typeof o!=="object") return m;
-    for(const k of Object.keys(o)){
-      const n=parseInt(o[k],10);
-      if(Number.isFinite(n) && n>0) m.set(k,n);
-    }
-    return m;
-  }
-
-  function getPayload(){
-    return {
-      v: 1,
-      savedAt: Date.now(),
-      texts: {
-        pl: document.getElementById("plInput")?.value || "",
-        res: document.getElementById("resInput")?.value || "",
-        bulk: document.getElementById("bulkInput")?.value || ""
-      },
-      state: {
-        qtyById: mapToObj(STATE.qtyById),
-        batchesByPanel: STATE.batchesByPanel || {p1:[],p2:[],p3:[]},
-        selectedBatchIdByPanel: STATE.selectedBatchIdByPanel || {p1:null,p2:null,p3:null},
-        activePanel: STATE.activePanel || "p1",
-        activeSubByPanel: STATE.activeSubByPanel || {p1:"p1-report",p2:"p2-report",p3:"p3-report"}
-      }
-    };
-  }
-
-  function saveNow(){
-    try{
-      const payload=getPayload();
-      localStorage.setItem(LS_KEY, JSON.stringify(payload));
-    }catch(e){
-      console.warn("Persistencia local: no se pudo guardar", e);
-    }
-  }
-  function scheduleSave(){
-    clearTimeout(saveTimer);
-    saveTimer=setTimeout(saveNow, 250);
-  }
-
-  function applyLoaded(payload){
-    // 1) Textos
-    const t = payload?.texts || {};
-    if(typeof t.pl==="string") document.getElementById("plInput").value = t.pl;
-    if(typeof t.res==="string") document.getElementById("resInput").value = t.res;
-    if(typeof t.bulk==="string") document.getElementById("bulkInput").value = t.bulk;
-
-    const hasAny = (t.pl||"").trim() || (t.res||"").trim() || (t.bulk||"").trim();
-
-    // 2) Recalcular (reconstruye moves/paneles) y luego re-aplicar estado operativo
-    if(hasAny){
-      try{ process(); }catch(e){ /* process alerta */ }
-    } else {
-      STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
-      STATE.qtyById=new Map();
-      STATE.batchesByPanel={p1:[],p2:[],p3:[]};
-      STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
-      STATE.moveById=new Map();
-      refreshAllTables();
-      setActivePanel("p1");
-      setActiveSub("p1","p1-report");
-      return;
-    }
-
-    const s = payload?.state || {};
-    if(s.qtyById) STATE.qtyById = objToMap(s.qtyById);
-    if(s.batchesByPanel) STATE.batchesByPanel = s.batchesByPanel;
-    if(s.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = s.selectedBatchIdByPanel;
-    if(s.activeSubByPanel) STATE.activeSubByPanel = s.activeSubByPanel;
-
-    refreshAllTables();
-
-    const panel = s.activePanel || "p1";
-    setActivePanel(panel);
-    setActiveSub(panel, (STATE.activeSubByPanel && STATE.activeSubByPanel[panel]) ? STATE.activeSubByPanel[panel] : (panel+"-report"));
-  }
-
-  function load(){
-    try{
-      const raw = localStorage.getItem(LS_KEY);
-      if(!raw) return;
-      const payload = JSON.parse(raw);
-      applyLoaded(payload);
-    }catch(e){
-      console.warn("Persistencia local: no se pudo cargar", e);
-    }
-  }
-
-  // Hook: inputs grandes
-  ["plInput","resInput","bulkInput"].forEach(id=>{
-    const el=document.getElementById(id);
-    if(el) el.addEventListener("input", scheduleSave);
-  });
-
-  // Hook: qty digitado
-  document.addEventListener("input",(ev)=>{
-    const el=ev.target;
-    if(el && el.matches('input[data-role="qty"]')) scheduleSave();
-  });
-
-  // Hook: pestañas / selects / acciones que cambian lotes
-  document.querySelectorAll(".tab, .subtab, select").forEach(el=>{
-    el.addEventListener("click", ()=>setTimeout(scheduleSave, 80));
-    el.addEventListener("change", ()=>setTimeout(scheduleSave, 80));
-  });
-  ["p1CopyPending","p2CopyPending","p3CopyPending","p1CopyBatch","p2CopyBatch","p3CopyBatch"].forEach(id=>{
-    const el=document.getElementById(id);
-    if(el) el.addEventListener("click", ()=>setTimeout(scheduleSave, 120));
-  });
-
-  // Hook: procesar
-  document.getElementById("process")?.addEventListener("click", ()=>setTimeout(scheduleSave, 120));
-
-  // Guardar al salir
-  window.addEventListener("beforeunload", saveNow);
-
-  // Exponer limpieza: borra UI + estado + localStorage (solo local)
-  window.limpiarHoja = function(){
-    const ok = confirm("¿Seguro que deseas LIMPIAR? Se borrará todo en ESTA PC.");
-    if(!ok) return;
-
-    try{ localStorage.removeItem(LS_KEY); }catch(e){}
-
-    document.getElementById("plInput").value="";
-    document.getElementById("resInput").value="";
-    document.getElementById("bulkInput").value="";
-
-    STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
-    STATE.qtyById=new Map();
-    STATE.batchesByPanel={p1:[],p2:[],p3:[]};
-    STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
-    STATE.moveById=new Map();
-
-    refreshAllTables();
-    setActivePanel("p1");
-    setActiveSub("p1","p1-report");
-  };
-
-  // Auto-load al abrir
-  load();
-})();
-</script>
-
 </body></html>`;
 
   const blob=new Blob([html],{type:"text/html;charset=utf-8"});
@@ -1557,20 +1395,10 @@ function printDayReport(){
 /* Events */
 document.getElementById("process").addEventListener("click",process);
 document.getElementById("clearAll").addEventListener("click",()=>{
-  // Limpieza controlada (no rompe UI): borra todo y también persistencia local si existe
-  if(typeof window.limpiarHoja === "function"){ window.limpiarHoja(); return; }
   if(!confirm("¿Seguro que deseas limpiar todo?")) return;
   document.getElementById("plInput").value="";
   document.getElementById("resInput").value="";
   document.getElementById("bulkInput").value="";
-  STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
-  STATE.qtyById=new Map();
-  STATE.batchesByPanel={p1:[],p2:[],p3:[]};
-  STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
-  STATE.moveById=new Map();
-  refreshAllTables();
-  setActivePanel("p1");
-  setActiveSub("p1","p1-report");
 });
 
 document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>setActivePanel(t.dataset.panel)));
@@ -1648,20 +1476,21 @@ document.querySelectorAll('button[data-print]').forEach(b=>{
 document.getElementById("downloadDay").addEventListener("click",downloadDayHTML);
 document.getElementById("printDay").addEventListener("click",printDayReport);
 </script>
-
 <script>
-/* ===== Persistencia LOCAL (sin Firebase) =====
-   - Guarda en esta PC (localStorage).
-   - No cambia UI ni funciones de impresión/lotes.
-   - Solo se borra todo con "Limpiar".
-*/
+/* ============================================================
+   Persistencia LOCAL (1 PC) - No Firebase
+   - No se pierde al recargar / cerrar el navegador.
+   - Solo se borra cuando presionas "Limpiar hoja".
+   ============================================================ */
 (function(){
-  const LS_KEY = "oriflame_ops_hub_local_v1";
-  let saveTimer = null;
+  const KEY = "reportePL_local_v1";
+
+  function safeParse(json, fallback){
+    try{ return JSON.parse(json); }catch(e){ return fallback; }
+  }
 
   function mapToObj(m){
-    const o={};
-    if(!m || typeof m.entries!=="function") return o;
+    const o={}; if(!m||typeof m.entries!=="function") return o;
     for(const [k,v] of m.entries()) o[k]=v;
     return o;
   }
@@ -1675,138 +1504,128 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
     return m;
   }
 
-  function getPayload(){
+  function getSnapshot(){
     return {
-      v: 1,
-      savedAt: Date.now(),
-      texts: {
+      ts: Date.now(),
+      inputs: {
         pl: document.getElementById("plInput")?.value || "",
         res: document.getElementById("resInput")?.value || "",
         bulk: document.getElementById("bulkInput")?.value || ""
       },
       state: {
-        qtyById: mapToObj(STATE.qtyById),
-        batchesByPanel: STATE.batchesByPanel || {p1:[],p2:[],p3:[]},
-        selectedBatchIdByPanel: STATE.selectedBatchIdByPanel || {p1:null,p2:null,p3:null},
-        activePanel: STATE.activePanel || "p1",
-        activeSubByPanel: STATE.activeSubByPanel || {p1:"p1-report",p2:"p2-report",p3:"p3-report"}
+        qtyById: mapToObj(window.STATE?.qtyById),
+        batchesByPanel: window.STATE?.batchesByPanel || {p1:[],p2:[],p3:[]},
+        selectedBatchIdByPanel: window.STATE?.selectedBatchIdByPanel || {p1:null,p2:null,p3:null},
+        activePanel: window.STATE?.activePanel || "p1",
+        activeSubByPanel: window.STATE?.activeSubByPanel || {p1:"p1-report",p2:"p2-report",p3:"p3-report"}
       }
     };
   }
 
   function saveNow(){
     try{
-      const payload=getPayload();
-      localStorage.setItem(LS_KEY, JSON.stringify(payload));
+      const snap=getSnapshot();
+      localStorage.setItem(KEY, JSON.stringify(snap));
     }catch(e){
-      console.warn("Persistencia local: no se pudo guardar", e);
+      console.warn("Persistencia: no se pudo guardar", e);
     }
   }
+
+  function restore(){
+    const raw = localStorage.getItem(KEY);
+    if(!raw) return;
+    const snap = safeParse(raw, null);
+    if(!snap || !snap.inputs) return;
+
+    // 1) restaurar inputs
+    const plEl=document.getElementById("plInput");
+    const resEl=document.getElementById("resInput");
+    const bulkEl=document.getElementById("bulkInput");
+    if(plEl) plEl.value = snap.inputs.pl || "";
+    if(resEl) resEl.value = snap.inputs.res || "";
+    if(bulkEl) bulkEl.value = snap.inputs.bulk || "";
+
+    // 2) si hay data, recalcular reporte (esto recrea moves / paneles)
+    const hasAny = (plEl?.value.trim() || resEl?.value.trim() || bulkEl?.value.trim());
+    if(hasAny && typeof window.process === "function"){
+      try{ window.process(); }catch(e){ console.warn("Persistencia: process() falló", e); }
+    }
+
+    // 3) restaurar estado operativo y refrescar
+    if(snap.state && window.STATE){
+      window.STATE.qtyById = objToMap(snap.state.qtyById);
+      window.STATE.batchesByPanel = snap.state.batchesByPanel || {p1:[],p2:[],p3:[]};
+      window.STATE.selectedBatchIdByPanel = snap.state.selectedBatchIdByPanel || {p1:null,p2:null,p3:null};
+      window.STATE.activePanel = snap.state.activePanel || "p1";
+      window.STATE.activeSubByPanel = snap.state.activeSubByPanel || {p1:"p1-report",p2:"p2-report",p3:"p3-report"};
+      if(typeof window.refreshAllTables === "function") window.refreshAllTables();
+      if(typeof window.setActivePanel === "function") window.setActivePanel(window.STATE.activePanel || "p1");
+      if(typeof window.setActiveSub === "function"){
+        const p=window.STATE.activePanel || "p1";
+        const sub=(window.STATE.activeSubByPanel && window.STATE.activeSubByPanel[p]) ? window.STATE.activeSubByPanel[p] : (p+"-report");
+        window.setActiveSub(p, sub);
+      }
+    }
+  }
+
+  // Debounce save
+  let t=null;
   function scheduleSave(){
-    clearTimeout(saveTimer);
-    saveTimer=setTimeout(saveNow, 250);
+    clearTimeout(t);
+    t=setTimeout(saveNow, 350);
   }
 
-  function applyLoaded(payload){
-    // 1) Textos
-    const t = payload?.texts || {};
-    if(typeof t.pl==="string") document.getElementById("plInput").value = t.pl;
-    if(typeof t.res==="string") document.getElementById("resInput").value = t.res;
-    if(typeof t.bulk==="string") document.getElementById("bulkInput").value = t.bulk;
-
-    const hasAny = (t.pl||"").trim() || (t.res||"").trim() || (t.bulk||"").trim();
-
-    // 2) Recalcular (reconstruye moves/paneles) y luego re-aplicar estado operativo
-    if(hasAny){
-      try{ process(); }catch(e){ /* process alerta */ }
-    } else {
-      STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
-      STATE.qtyById=new Map();
-      STATE.batchesByPanel={p1:[],p2:[],p3:[]};
-      STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
-      STATE.moveById=new Map();
-      refreshAllTables();
-      setActivePanel("p1");
-      setActiveSub("p1","p1-report");
-      return;
-    }
-
-    const s = payload?.state || {};
-    if(s.qtyById) STATE.qtyById = objToMap(s.qtyById);
-    if(s.batchesByPanel) STATE.batchesByPanel = s.batchesByPanel;
-    if(s.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = s.selectedBatchIdByPanel;
-    if(s.activeSubByPanel) STATE.activeSubByPanel = s.activeSubByPanel;
-
-    refreshAllTables();
-
-    const panel = s.activePanel || "p1";
-    setActivePanel(panel);
-    setActiveSub(panel, (STATE.activeSubByPanel && STATE.activeSubByPanel[panel]) ? STATE.activeSubByPanel[panel] : (panel+"-report"));
-  }
-
-  function load(){
-    try{
-      const raw = localStorage.getItem(LS_KEY);
-      if(!raw) return;
-      const payload = JSON.parse(raw);
-      applyLoaded(payload);
-    }catch(e){
-      console.warn("Persistencia local: no se pudo cargar", e);
-    }
-  }
-
-  // Hook: inputs grandes
+  // Hook inputs
   ["plInput","resInput","bulkInput"].forEach(id=>{
     const el=document.getElementById(id);
     if(el) el.addEventListener("input", scheduleSave);
   });
 
-  // Hook: qty digitado
+  // Hook qty inputs (delegado)
   document.addEventListener("input",(ev)=>{
     const el=ev.target;
-    if(el && el.matches('input[data-role="qty"]')) scheduleSave();
+    if(el && el.matches && el.matches('input[data-role="qty"]')) scheduleSave();
   });
 
-  // Hook: pestañas / selects / acciones que cambian lotes
-  document.querySelectorAll(".tab, .subtab, select").forEach(el=>{
-    el.addEventListener("click", ()=>setTimeout(scheduleSave, 80));
-    el.addEventListener("change", ()=>setTimeout(scheduleSave, 80));
-  });
-  ["p1CopyPending","p2CopyPending","p3CopyPending","p1CopyBatch","p2CopyBatch","p3CopyBatch"].forEach(id=>{
+  // Hook acciones que cambian lotes/pestañas
+  ["process","p1CopyPending","p2CopyPending","p3CopyPending","p1BatchSelect","p2BatchSelect","p3BatchSelect",
+   "p1CopyBatch","p2CopyBatch","p3CopyBatch","downloadDay","printDay"].forEach(id=>{
     const el=document.getElementById(id);
-    if(el) el.addEventListener("click", ()=>setTimeout(scheduleSave, 120));
+    if(!el) return;
+    el.addEventListener("click", ()=>setTimeout(saveNow, 120));
+    el.addEventListener("change", ()=>setTimeout(saveNow, 120));
   });
 
-  // Hook: procesar
-  document.getElementById("process")?.addEventListener("click", ()=>setTimeout(scheduleSave, 120));
+  // Limpiar hoja: borrar inputs + borrar persistencia + reset visual
+  const clearBtn=document.getElementById("clearAll");
+  if(clearBtn){
+    clearBtn.addEventListener("click", ()=>{
+      // el original ya pregunta confirm, así que esperamos un tick y verificamos si quedó vacío
+      setTimeout(()=>{
+        const pl=document.getElementById("plInput")?.value || "";
+        const res=document.getElementById("resInput")?.value || "";
+        const bulk=document.getElementById("bulkInput")?.value || "";
+        const allEmpty = !(pl.trim() || res.trim() || bulk.trim());
+        if(allEmpty){
+          try{ localStorage.removeItem(KEY); }catch(e){}
+          // reset estado
+          if(window.STATE){
+            window.STATE.p1=[]; window.STATE.p2=[]; window.STATE.p3=[];
+            window.STATE.qtyById=new Map();
+            window.STATE.batchesByPanel={p1:[],p2:[],p3:[]};
+            window.STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
+            window.STATE.moveById=new Map();
+            if(typeof window.refreshAllTables === "function") window.refreshAllTables();
+            if(typeof window.setActivePanel === "function") window.setActivePanel("p1");
+            if(typeof window.setActiveSub === "function") window.setActiveSub("p1","p1-report");
+          }
+        }
+      }, 30);
+    }, {capture:false});
+  }
 
-  // Guardar al salir
-  window.addEventListener("beforeunload", saveNow);
-
-  // Exponer limpieza: borra UI + estado + localStorage (solo local)
-  window.limpiarHoja = function(){
-    const ok = confirm("¿Seguro que deseas LIMPIAR? Se borrará todo en ESTA PC.");
-    if(!ok) return;
-
-    try{ localStorage.removeItem(LS_KEY); }catch(e){}
-
-    document.getElementById("plInput").value="";
-    document.getElementById("resInput").value="";
-    document.getElementById("bulkInput").value="";
-
-    STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
-    STATE.qtyById=new Map();
-    STATE.batchesByPanel={p1:[],p2:[],p3:[]};
-    STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
-    STATE.moveById=new Map();
-
-    refreshAllTables();
-    setActivePanel("p1");
-    setActiveSub("p1","p1-report");
-  };
-
-  // Auto-load al abrir
-  load();
+  // Restore al abrir
+  window.addEventListener("load", restore);
 })();
 </script>
 
