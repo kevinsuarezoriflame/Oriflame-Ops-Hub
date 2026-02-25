@@ -321,6 +321,7 @@
     <div class="wrap brand">
       <div class="brand-left">
         <div class="capsule">ORIFLAME · Operaciones</div>
+        <div id="syncBadge" style="margin-top:6px;font-size:12px;color:#0f5132;background:#d1e7dd;border:1px solid #badbcc;padding:6px 10px;border-radius:10px;display:inline-block;">Sync: listo</div>
         <div class="hero">
           <h1>Reporte a PL</h1>
           <div class="sub">Nivel 1 vs Nivel 2+ vs Zona Air/CW</div>
@@ -1352,6 +1353,7 @@ th{text-transform:uppercase;letter-spacing:.06em;color:#475569;font-size:11px;bo
 @media print{body{margin:0;}}
 </style></head><body>
 <div class="capsule">ORIFLAME · Operaciones</div>
+        <div id="syncBadge" style="margin-top:6px;font-size:12px;color:#0f5132;background:#d1e7dd;border:1px solid #badbcc;padding:6px 10px;border-radius:10px;display:inline-block;">Sync: listo</div>
 <h1>Trabajo del día</h1>
 <div class="sub">${dateStr}</div>
 <table><thead><tr>
@@ -1362,6 +1364,185 @@ th{text-transform:uppercase;letter-spacing:.06em;color:#475569;font-size:11px;bo
 <th style="width:70px;">Panel</th>
 <th style="width:240px;">Lote</th>
 </tr></thead><tbody>${tableRows}</tbody></table>
+
+<script>
+/* ===== Persistencia LOCAL (por PC) =====
+   Objetivo: al recargar NO se pierde nada.
+   Solo se borra al presionar "Limpiar" (botón existente) o si llamas window.limpiarHoja().
+*/
+(function(){
+  const KEY = "reportePL_local_state_v3";
+
+  function setSyncBadge(msg, ok=true){
+    const el=document.getElementById("syncBadge");
+    if(!el) return;
+    el.textContent = msg;
+    el.style.background = ok ? "#d1e7dd" : "#f8d7da";
+    el.style.borderColor = ok ? "#badbcc" : "#f5c2c7";
+    el.style.color = ok ? "#0f5132" : "#842029";
+  }
+
+  function snapshotToObjMap(m){
+    const obj={};
+    if(!m || typeof m.entries!=="function") return obj;
+    for(const [k,v] of m.entries()) obj[k]=v;
+    return obj;
+  }
+  function objToMap(o){
+    const m=new Map();
+    if(!o || typeof o!=="object") return m;
+    for(const k of Object.keys(o)){
+      const n=parseInt(o[k],10);
+      if(Number.isFinite(n) && n>0) m.set(k,n);
+    }
+    return m;
+  }
+
+  function safeGet(id){ return document.getElementById(id); }
+
+  function capture(){
+    const pl = safeGet("plInput")?.value || "";
+    const res = safeGet("resInput")?.value || "";
+    const bulk = safeGet("bulkInput")?.value || "";
+
+    return {
+      v: 3,
+      savedAt: Date.now(),
+      texts: { pl, res, bulk },
+      ui: {
+        activePanel: (window.STATE && STATE.activePanel) ? STATE.activePanel : "p1",
+        activeSubByPanel: (window.STATE && STATE.activeSubByPanel) ? STATE.activeSubByPanel : {p1:"p1-report",p2:"p2-report",p3:"p3-report"}
+      },
+      state: {
+        qtyById: (window.STATE && STATE.qtyById) ? snapshotToObjMap(STATE.qtyById) : {},
+        batchesByPanel: (window.STATE && STATE.batchesByPanel) ? STATE.batchesByPanel : {p1:[],p2:[],p3:[]},
+        selectedBatchIdByPanel: (window.STATE && STATE.selectedBatchIdByPanel) ? STATE.selectedBatchIdByPanel : {p1:null,p2:null,p3:null}
+      }
+    };
+  }
+
+  function restore(payload){
+    if(!payload || !payload.texts) return false;
+
+    const {pl,res,bulk} = payload.texts;
+
+    if(safeGet("plInput")) safeGet("plInput").value = pl || "";
+    if(safeGet("resInput")) safeGet("resInput").value = res || "";
+    if(safeGet("bulkInput")) safeGet("bulkInput").value = bulk || "";
+
+    const hasAny = ((pl||"").trim() || (res||"").trim() || (bulk||"").trim());
+    if(hasAny && typeof window.process === "function"){
+      try{ window.process(); }catch(e){}
+    }
+
+    if(window.STATE){
+      STATE.qtyById = objToMap(payload.state?.qtyById || {});
+      if(payload.state?.batchesByPanel) STATE.batchesByPanel = payload.state.batchesByPanel;
+      if(payload.state?.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = payload.state.selectedBatchIdByPanel;
+      if(payload.ui?.activeSubByPanel) STATE.activeSubByPanel = payload.ui.activeSubByPanel;
+
+      if(typeof window.refreshAllTables==="function") window.refreshAllTables();
+
+      const p = payload.ui?.activePanel || "p1";
+      if(typeof window.setActivePanel==="function") window.setActivePanel(p);
+      if(typeof window.setActiveSub==="function"){
+        const sub = (STATE.activeSubByPanel && STATE.activeSubByPanel[p]) ? STATE.activeSubByPanel[p] : (p+"-report");
+        window.setActiveSub(p, sub);
+      }
+    }
+
+    return true;
+  }
+
+  let saveTimer = null;
+  function scheduleSave(){
+    setSyncBadge("Sync: guardando…");
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(()=>{
+      try{
+        const payload = capture();
+        localStorage.setItem(KEY, JSON.stringify(payload));
+        setSyncBadge("Sync: OK (guardado)");
+      }catch(e){
+        console.warn("Persistencia local falló:", e);
+        setSyncBadge("Sync: ERROR (localStorage)", false);
+      }
+    }, 350);
+  }
+
+  window.limpiarHoja = function(){
+    const ok = confirm("¿Seguro que deseas LIMPIAR LA HOJA? Esto borrará todo en esta PC.");
+    if(!ok) return;
+
+    try{ localStorage.removeItem(KEY); }catch(e){}
+    try{
+      if(safeGet("plInput")) safeGet("plInput").value="";
+      if(safeGet("resInput")) safeGet("resInput").value="";
+      if(safeGet("bulkInput")) safeGet("bulkInput").value="";
+      if(window.STATE){
+        STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
+        STATE.qtyById=new Map();
+        STATE.batchesByPanel={p1:[],p2:[],p3:[]};
+        STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
+        STATE.moveById=new Map();
+        if(typeof window.refreshAllTables==="function") window.refreshAllTables();
+        if(typeof window.setActivePanel==="function") window.setActivePanel("p1");
+        if(typeof window.setActiveSub==="function") window.setActiveSub("p1","p1-report");
+      }
+    }catch(e){}
+    setSyncBadge("Sync: limpiado");
+  };
+
+  // Hook al botón Limpiar (cualquier id)
+  const btnClear = document.getElementById("clearAll") || document.getElementById("clear") || document.querySelector("button#clearAll");
+  const btnByText = [...document.querySelectorAll("button")].find(b => (b.textContent||"").trim().toLowerCase()==="limpiar" || (b.textContent||"").toLowerCase().includes("limpiar hoja"));
+  const limpiarBtn = btnClear || btnByText;
+  if(limpiarBtn){
+    limpiarBtn.addEventListener("click",(e)=>{
+      e.preventDefault(); e.stopPropagation();
+      window.limpiarHoja();
+    }, true);
+  }
+
+  ["plInput","resInput","bulkInput"].forEach(id=>{
+    const el=safeGet(id);
+    if(el) el.addEventListener("input", scheduleSave);
+  });
+
+  document.addEventListener("input",(ev)=>{
+    const el=ev.target;
+    if(el && el.matches && el.matches('input[data-role="qty"]')) scheduleSave();
+  });
+
+  ["process","p1CopyPending","p2CopyPending","p3CopyPending","p1BatchSelect","p2BatchSelect","p3BatchSelect"].forEach(id=>{
+    const el=safeGet(id);
+    if(!el) return;
+    el.addEventListener("click", ()=>setTimeout(scheduleSave, 80));
+    el.addEventListener("change", ()=>setTimeout(scheduleSave, 80));
+  });
+
+  try{
+    const raw = localStorage.getItem(KEY);
+    if(raw){
+      const payload = JSON.parse(raw);
+      const ok = restore(payload);
+      if(ok){
+        const t = payload.savedAt ? new Date(payload.savedAt) : null;
+        const stamp = t ? t.toLocaleString() : "";
+        setSyncBadge("Sync: OK (restaurado) " + stamp);
+      }else{
+        setSyncBadge("Sync: listo");
+      }
+    }else{
+      setSyncBadge("Sync: listo");
+    }
+  }catch(e){
+    console.warn("No se pudo restaurar:", e);
+    setSyncBadge("Sync: ERROR (restaurar)", false);
+  }
+})();
+</script>
+
 </body></html>`;
 
   const blob=new Blob([html],{type:"text/html;charset=utf-8"});
@@ -1626,6 +1807,185 @@ document.getElementById("printDay").addEventListener("click",printDayReport);
 
   // Restore al abrir
   window.addEventListener("load", restore);
+})();
+</script>
+
+
+<script>
+/* ===== Persistencia LOCAL (por PC) =====
+   Objetivo: al recargar NO se pierde nada.
+   Solo se borra al presionar "Limpiar" (botón existente) o si llamas window.limpiarHoja().
+*/
+(function(){
+  const KEY = "reportePL_local_state_v3";
+
+  function setSyncBadge(msg, ok=true){
+    const el=document.getElementById("syncBadge");
+    if(!el) return;
+    el.textContent = msg;
+    el.style.background = ok ? "#d1e7dd" : "#f8d7da";
+    el.style.borderColor = ok ? "#badbcc" : "#f5c2c7";
+    el.style.color = ok ? "#0f5132" : "#842029";
+  }
+
+  function snapshotToObjMap(m){
+    const obj={};
+    if(!m || typeof m.entries!=="function") return obj;
+    for(const [k,v] of m.entries()) obj[k]=v;
+    return obj;
+  }
+  function objToMap(o){
+    const m=new Map();
+    if(!o || typeof o!=="object") return m;
+    for(const k of Object.keys(o)){
+      const n=parseInt(o[k],10);
+      if(Number.isFinite(n) && n>0) m.set(k,n);
+    }
+    return m;
+  }
+
+  function safeGet(id){ return document.getElementById(id); }
+
+  function capture(){
+    const pl = safeGet("plInput")?.value || "";
+    const res = safeGet("resInput")?.value || "";
+    const bulk = safeGet("bulkInput")?.value || "";
+
+    return {
+      v: 3,
+      savedAt: Date.now(),
+      texts: { pl, res, bulk },
+      ui: {
+        activePanel: (window.STATE && STATE.activePanel) ? STATE.activePanel : "p1",
+        activeSubByPanel: (window.STATE && STATE.activeSubByPanel) ? STATE.activeSubByPanel : {p1:"p1-report",p2:"p2-report",p3:"p3-report"}
+      },
+      state: {
+        qtyById: (window.STATE && STATE.qtyById) ? snapshotToObjMap(STATE.qtyById) : {},
+        batchesByPanel: (window.STATE && STATE.batchesByPanel) ? STATE.batchesByPanel : {p1:[],p2:[],p3:[]},
+        selectedBatchIdByPanel: (window.STATE && STATE.selectedBatchIdByPanel) ? STATE.selectedBatchIdByPanel : {p1:null,p2:null,p3:null}
+      }
+    };
+  }
+
+  function restore(payload){
+    if(!payload || !payload.texts) return false;
+
+    const {pl,res,bulk} = payload.texts;
+
+    if(safeGet("plInput")) safeGet("plInput").value = pl || "";
+    if(safeGet("resInput")) safeGet("resInput").value = res || "";
+    if(safeGet("bulkInput")) safeGet("bulkInput").value = bulk || "";
+
+    const hasAny = ((pl||"").trim() || (res||"").trim() || (bulk||"").trim());
+    if(hasAny && typeof window.process === "function"){
+      try{ window.process(); }catch(e){}
+    }
+
+    if(window.STATE){
+      STATE.qtyById = objToMap(payload.state?.qtyById || {});
+      if(payload.state?.batchesByPanel) STATE.batchesByPanel = payload.state.batchesByPanel;
+      if(payload.state?.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = payload.state.selectedBatchIdByPanel;
+      if(payload.ui?.activeSubByPanel) STATE.activeSubByPanel = payload.ui.activeSubByPanel;
+
+      if(typeof window.refreshAllTables==="function") window.refreshAllTables();
+
+      const p = payload.ui?.activePanel || "p1";
+      if(typeof window.setActivePanel==="function") window.setActivePanel(p);
+      if(typeof window.setActiveSub==="function"){
+        const sub = (STATE.activeSubByPanel && STATE.activeSubByPanel[p]) ? STATE.activeSubByPanel[p] : (p+"-report");
+        window.setActiveSub(p, sub);
+      }
+    }
+
+    return true;
+  }
+
+  let saveTimer = null;
+  function scheduleSave(){
+    setSyncBadge("Sync: guardando…");
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(()=>{
+      try{
+        const payload = capture();
+        localStorage.setItem(KEY, JSON.stringify(payload));
+        setSyncBadge("Sync: OK (guardado)");
+      }catch(e){
+        console.warn("Persistencia local falló:", e);
+        setSyncBadge("Sync: ERROR (localStorage)", false);
+      }
+    }, 350);
+  }
+
+  window.limpiarHoja = function(){
+    const ok = confirm("¿Seguro que deseas LIMPIAR LA HOJA? Esto borrará todo en esta PC.");
+    if(!ok) return;
+
+    try{ localStorage.removeItem(KEY); }catch(e){}
+    try{
+      if(safeGet("plInput")) safeGet("plInput").value="";
+      if(safeGet("resInput")) safeGet("resInput").value="";
+      if(safeGet("bulkInput")) safeGet("bulkInput").value="";
+      if(window.STATE){
+        STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
+        STATE.qtyById=new Map();
+        STATE.batchesByPanel={p1:[],p2:[],p3:[]};
+        STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
+        STATE.moveById=new Map();
+        if(typeof window.refreshAllTables==="function") window.refreshAllTables();
+        if(typeof window.setActivePanel==="function") window.setActivePanel("p1");
+        if(typeof window.setActiveSub==="function") window.setActiveSub("p1","p1-report");
+      }
+    }catch(e){}
+    setSyncBadge("Sync: limpiado");
+  };
+
+  // Hook al botón Limpiar (cualquier id)
+  const btnClear = document.getElementById("clearAll") || document.getElementById("clear") || document.querySelector("button#clearAll");
+  const btnByText = [...document.querySelectorAll("button")].find(b => (b.textContent||"").trim().toLowerCase()==="limpiar" || (b.textContent||"").toLowerCase().includes("limpiar hoja"));
+  const limpiarBtn = btnClear || btnByText;
+  if(limpiarBtn){
+    limpiarBtn.addEventListener("click",(e)=>{
+      e.preventDefault(); e.stopPropagation();
+      window.limpiarHoja();
+    }, true);
+  }
+
+  ["plInput","resInput","bulkInput"].forEach(id=>{
+    const el=safeGet(id);
+    if(el) el.addEventListener("input", scheduleSave);
+  });
+
+  document.addEventListener("input",(ev)=>{
+    const el=ev.target;
+    if(el && el.matches && el.matches('input[data-role="qty"]')) scheduleSave();
+  });
+
+  ["process","p1CopyPending","p2CopyPending","p3CopyPending","p1BatchSelect","p2BatchSelect","p3BatchSelect"].forEach(id=>{
+    const el=safeGet(id);
+    if(!el) return;
+    el.addEventListener("click", ()=>setTimeout(scheduleSave, 80));
+    el.addEventListener("change", ()=>setTimeout(scheduleSave, 80));
+  });
+
+  try{
+    const raw = localStorage.getItem(KEY);
+    if(raw){
+      const payload = JSON.parse(raw);
+      const ok = restore(payload);
+      if(ok){
+        const t = payload.savedAt ? new Date(payload.savedAt) : null;
+        const stamp = t ? t.toLocaleString() : "";
+        setSyncBadge("Sync: OK (restaurado) " + stamp);
+      }else{
+        setSyncBadge("Sync: listo");
+      }
+    }else{
+      setSyncBadge("Sync: listo");
+    }
+  }catch(e){
+    console.warn("No se pudo restaurar:", e);
+    setSyncBadge("Sync: ERROR (restaurar)", false);
+  }
 })();
 </script>
 
