@@ -1308,7 +1308,44 @@ document.getElementById("p3CopyBatch").addEventListener("click",async ()=>{ awai
     }
   }
 
-  // Debounce guardado
+  
+  // Función global para el botón "Limpiar hoja" (usa la confirmación del listener principal)
+  // Requisito: solo se borra si alguien presiona "Limpiar hoja".
+  window.limpiarHoja = async function(){
+    try{
+      // 1) Borrar persistencia local
+      localStorage.removeItem(KEY);
+    }catch(e){ /* ignore */ }
+
+    // 2) Limpiar inputs
+    const plEl=document.getElementById("plInput");
+    const resEl=document.getElementById("resInput");
+    const bulkEl=document.getElementById("bulkInput");
+    if(plEl) plEl.value="";
+    if(resEl) resEl.value="";
+    if(bulkEl) bulkEl.value="";
+
+    // 3) Resetear estado operativo
+    if(window.STATE){
+      STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
+      STATE.qtyById = new Map();
+      STATE.batchesByPanel = {p1:[],p2:[],p3:[]};
+      STATE.selectedBatchIdByPanel = {p1:null,p2:null,p3:null};
+      STATE.moveById = new Map();
+      // Mantener defaults
+      STATE.activePanel = "p1";
+      STATE.activeSubByPanel = {p1:"p1-report",p2:"p2-report",p3:"p3-report"};
+    }
+
+    // 4) Refrescar UI
+    try{ if(typeof window.refreshAllTables==="function") refreshAllTables(); }catch(e){}
+    try{ if(typeof window.setActivePanel==="function") setActivePanel("p1"); }catch(e){}
+    try{ if(typeof window.setActiveSub==="function") setActiveSub("p1","p1-report"); }catch(e){}
+
+    setBadge("Persistencia: limpia (local borrado)");
+  };
+
+// Debounce guardado
   let t=null;
   function schedule(){
     clearTimeout(t);
