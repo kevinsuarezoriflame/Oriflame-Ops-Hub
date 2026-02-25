@@ -313,7 +313,22 @@
         border: 1px solid #9adfd4 !important;
       }
     }
-  </style>
+  
+    .syncbar{
+      display:inline-block;
+      margin-top:8px;
+      padding:8px 12px;
+      border-radius:12px;
+      font-weight:700;
+      font-size:12px;
+      border:1px solid rgba(0,0,0,.08);
+      background:#e6f6ef;
+      color:#0f5132;
+    }
+    .syncbar.warn{ background:#fff3cd; color:#664d03; }
+    .syncbar.err{ background:#f8d7da; color:#842029; }
+
+</style>
 </head>
 
 <body>
@@ -321,7 +336,7 @@
     <div class="wrap brand">
       <div class="brand-left">
         <div class="capsule">ORIFLAME · Operaciones</div>
-        <div id="syncBadge" style="margin-top:6px;font-size:12px;color:#0f5132;background:#d1e7dd;border:1px solid #badbcc;padding:6px 10px;border-radius:10px;display:inline-block;">Sync: listo</div>
+      <div id="syncStatus" class="syncbar">Sync: listo</div>
         <div class="hero">
           <h1>Reporte a PL</h1>
           <div class="sub">Nivel 1 vs Nivel 2+ vs Zona Air/CW</div>
@@ -1353,7 +1368,7 @@ th{text-transform:uppercase;letter-spacing:.06em;color:#475569;font-size:11px;bo
 @media print{body{margin:0;}}
 </style></head><body>
 <div class="capsule">ORIFLAME · Operaciones</div>
-        <div id="syncBadge" style="margin-top:6px;font-size:12px;color:#0f5132;background:#d1e7dd;border:1px solid #badbcc;padding:6px 10px;border-radius:10px;display:inline-block;">Sync: listo</div>
+      <div id="syncStatus" class="syncbar">Sync: listo</div>
 <h1>Trabajo del día</h1>
 <div class="sub">${dateStr}</div>
 <table><thead><tr>
@@ -1364,185 +1379,6 @@ th{text-transform:uppercase;letter-spacing:.06em;color:#475569;font-size:11px;bo
 <th style="width:70px;">Panel</th>
 <th style="width:240px;">Lote</th>
 </tr></thead><tbody>${tableRows}</tbody></table>
-
-<script>
-/* ===== Persistencia LOCAL (por PC) =====
-   Objetivo: al recargar NO se pierde nada.
-   Solo se borra al presionar "Limpiar" (botón existente) o si llamas window.limpiarHoja().
-*/
-(function(){
-  const KEY = "reportePL_local_state_v3";
-
-  function setSyncBadge(msg, ok=true){
-    const el=document.getElementById("syncBadge");
-    if(!el) return;
-    el.textContent = msg;
-    el.style.background = ok ? "#d1e7dd" : "#f8d7da";
-    el.style.borderColor = ok ? "#badbcc" : "#f5c2c7";
-    el.style.color = ok ? "#0f5132" : "#842029";
-  }
-
-  function snapshotToObjMap(m){
-    const obj={};
-    if(!m || typeof m.entries!=="function") return obj;
-    for(const [k,v] of m.entries()) obj[k]=v;
-    return obj;
-  }
-  function objToMap(o){
-    const m=new Map();
-    if(!o || typeof o!=="object") return m;
-    for(const k of Object.keys(o)){
-      const n=parseInt(o[k],10);
-      if(Number.isFinite(n) && n>0) m.set(k,n);
-    }
-    return m;
-  }
-
-  function safeGet(id){ return document.getElementById(id); }
-
-  function capture(){
-    const pl = safeGet("plInput")?.value || "";
-    const res = safeGet("resInput")?.value || "";
-    const bulk = safeGet("bulkInput")?.value || "";
-
-    return {
-      v: 3,
-      savedAt: Date.now(),
-      texts: { pl, res, bulk },
-      ui: {
-        activePanel: (window.STATE && STATE.activePanel) ? STATE.activePanel : "p1",
-        activeSubByPanel: (window.STATE && STATE.activeSubByPanel) ? STATE.activeSubByPanel : {p1:"p1-report",p2:"p2-report",p3:"p3-report"}
-      },
-      state: {
-        qtyById: (window.STATE && STATE.qtyById) ? snapshotToObjMap(STATE.qtyById) : {},
-        batchesByPanel: (window.STATE && STATE.batchesByPanel) ? STATE.batchesByPanel : {p1:[],p2:[],p3:[]},
-        selectedBatchIdByPanel: (window.STATE && STATE.selectedBatchIdByPanel) ? STATE.selectedBatchIdByPanel : {p1:null,p2:null,p3:null}
-      }
-    };
-  }
-
-  function restore(payload){
-    if(!payload || !payload.texts) return false;
-
-    const {pl,res,bulk} = payload.texts;
-
-    if(safeGet("plInput")) safeGet("plInput").value = pl || "";
-    if(safeGet("resInput")) safeGet("resInput").value = res || "";
-    if(safeGet("bulkInput")) safeGet("bulkInput").value = bulk || "";
-
-    const hasAny = ((pl||"").trim() || (res||"").trim() || (bulk||"").trim());
-    if(hasAny && typeof window.process === "function"){
-      try{ window.process(); }catch(e){}
-    }
-
-    if(window.STATE){
-      STATE.qtyById = objToMap(payload.state?.qtyById || {});
-      if(payload.state?.batchesByPanel) STATE.batchesByPanel = payload.state.batchesByPanel;
-      if(payload.state?.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = payload.state.selectedBatchIdByPanel;
-      if(payload.ui?.activeSubByPanel) STATE.activeSubByPanel = payload.ui.activeSubByPanel;
-
-      if(typeof window.refreshAllTables==="function") window.refreshAllTables();
-
-      const p = payload.ui?.activePanel || "p1";
-      if(typeof window.setActivePanel==="function") window.setActivePanel(p);
-      if(typeof window.setActiveSub==="function"){
-        const sub = (STATE.activeSubByPanel && STATE.activeSubByPanel[p]) ? STATE.activeSubByPanel[p] : (p+"-report");
-        window.setActiveSub(p, sub);
-      }
-    }
-
-    return true;
-  }
-
-  let saveTimer = null;
-  function scheduleSave(){
-    setSyncBadge("Sync: guardando…");
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(()=>{
-      try{
-        const payload = capture();
-        localStorage.setItem(KEY, JSON.stringify(payload));
-        setSyncBadge("Sync: OK (guardado)");
-      }catch(e){
-        console.warn("Persistencia local falló:", e);
-        setSyncBadge("Sync: ERROR (localStorage)", false);
-      }
-    }, 350);
-  }
-
-  window.limpiarHoja = function(){
-    const ok = confirm("¿Seguro que deseas LIMPIAR LA HOJA? Esto borrará todo en esta PC.");
-    if(!ok) return;
-
-    try{ localStorage.removeItem(KEY); }catch(e){}
-    try{
-      if(safeGet("plInput")) safeGet("plInput").value="";
-      if(safeGet("resInput")) safeGet("resInput").value="";
-      if(safeGet("bulkInput")) safeGet("bulkInput").value="";
-      if(window.STATE){
-        STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
-        STATE.qtyById=new Map();
-        STATE.batchesByPanel={p1:[],p2:[],p3:[]};
-        STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
-        STATE.moveById=new Map();
-        if(typeof window.refreshAllTables==="function") window.refreshAllTables();
-        if(typeof window.setActivePanel==="function") window.setActivePanel("p1");
-        if(typeof window.setActiveSub==="function") window.setActiveSub("p1","p1-report");
-      }
-    }catch(e){}
-    setSyncBadge("Sync: limpiado");
-  };
-
-  // Hook al botón Limpiar (cualquier id)
-  const btnClear = document.getElementById("clearAll") || document.getElementById("clear") || document.querySelector("button#clearAll");
-  const btnByText = [...document.querySelectorAll("button")].find(b => (b.textContent||"").trim().toLowerCase()==="limpiar" || (b.textContent||"").toLowerCase().includes("limpiar hoja"));
-  const limpiarBtn = btnClear || btnByText;
-  if(limpiarBtn){
-    limpiarBtn.addEventListener("click",(e)=>{
-      e.preventDefault(); e.stopPropagation();
-      window.limpiarHoja();
-    }, true);
-  }
-
-  ["plInput","resInput","bulkInput"].forEach(id=>{
-    const el=safeGet(id);
-    if(el) el.addEventListener("input", scheduleSave);
-  });
-
-  document.addEventListener("input",(ev)=>{
-    const el=ev.target;
-    if(el && el.matches && el.matches('input[data-role="qty"]')) scheduleSave();
-  });
-
-  ["process","p1CopyPending","p2CopyPending","p3CopyPending","p1BatchSelect","p2BatchSelect","p3BatchSelect"].forEach(id=>{
-    const el=safeGet(id);
-    if(!el) return;
-    el.addEventListener("click", ()=>setTimeout(scheduleSave, 80));
-    el.addEventListener("change", ()=>setTimeout(scheduleSave, 80));
-  });
-
-  try{
-    const raw = localStorage.getItem(KEY);
-    if(raw){
-      const payload = JSON.parse(raw);
-      const ok = restore(payload);
-      if(ok){
-        const t = payload.savedAt ? new Date(payload.savedAt) : null;
-        const stamp = t ? t.toLocaleString() : "";
-        setSyncBadge("Sync: OK (restaurado) " + stamp);
-      }else{
-        setSyncBadge("Sync: listo");
-      }
-    }else{
-      setSyncBadge("Sync: listo");
-    }
-  }catch(e){
-    console.warn("No se pudo restaurar:", e);
-    setSyncBadge("Sync: ERROR (restaurar)", false);
-  }
-})();
-</script>
-
 </body></html>`;
 
   const blob=new Blob([html],{type:"text/html;charset=utf-8"});
@@ -1577,9 +1413,29 @@ function printDayReport(){
 document.getElementById("process").addEventListener("click",process);
 document.getElementById("clearAll").addEventListener("click",()=>{
   if(!confirm("¿Seguro que deseas limpiar todo?")) return;
+
+  // Limpia inputs
   document.getElementById("plInput").value="";
   document.getElementById("resInput").value="";
   document.getElementById("bulkInput").value="";
+
+  // Limpia estado / tablas
+  try{
+    STATE.qtyById = new Map();
+    STATE.batchesByPanel = { p1:[], p2:[], p3:[] };
+    STATE.selectedBatchIdByPanel = { p1:null, p2:null, p3:null };
+    STATE.activePanel = "p1";
+    STATE.activeSubByPanel = { p1:"report", p2:"report", p3:"report" };
+    STATE.reportByPanel = { p1:[], p2:[], p3:[] };
+    STATE.pendingByPanel = { p1:[], p2:[], p3:[] };
+  }catch(e){}
+
+  // Borra persistencia local
+  try{ localStorage.removeItem(STORAGE_KEY); }catch(e){}
+  setSync("Sync: limpio", "warn");
+
+  // Re-render vacío si existe el motor
+  try{ if(typeof renderAll==="function") renderAll(); }catch(e){}
 });
 
 document.querySelectorAll(".tab").forEach(t=>t.addEventListener("click",()=>setActivePanel(t.dataset.panel)));
@@ -1656,338 +1512,181 @@ document.querySelectorAll('button[data-print]').forEach(b=>{
 });
 document.getElementById("downloadDay").addEventListener("click",downloadDayHTML);
 document.getElementById("printDay").addEventListener("click",printDayReport);
-</script>
-<script>
-/* ============================================================
-   Persistencia LOCAL (1 PC) - No Firebase
-   - No se pierde al recargar / cerrar el navegador.
-   - Solo se borra cuando presionas "Limpiar hoja".
-   ============================================================ */
-(function(){
-  const KEY = "reportePL_local_v1";
 
-  function safeParse(json, fallback){
-    try{ return JSON.parse(json); }catch(e){ return fallback; }
-  }
+/* =======================
+   PERSISTENCIA LOCAL (NO SE PIERDE AL RECARGAR)
+   - Se guarda en localStorage del navegador (misma PC)
+   - Solo se borra con el botón "Limpiar"
+   ======================= */
+const STORAGE_KEY = "oriflame_ops_hub_reporte_bulk__v3";
 
-  function mapToObj(m){
-    const o={}; if(!m||typeof m.entries!=="function") return o;
-    for(const [k,v] of m.entries()) o[k]=v;
-    return o;
-  }
-  function objToMap(o){
-    const m=new Map();
-    if(!o || typeof o!=="object") return m;
-    for(const k of Object.keys(o)){
-      const n=parseInt(o[k],10);
-      if(Number.isFinite(n) && n>0) m.set(k,n);
-    }
-    return m;
-  }
+function setSync(text, level){
+  const el = document.getElementById("syncStatus");
+  if(!el) return;
+  el.classList.remove("warn","err");
+  if(level==="warn") el.classList.add("warn");
+  if(level==="err") el.classList.add("err");
+  el.textContent = text;
+}
 
-  function getSnapshot(){
-    return {
-      ts: Date.now(),
-      inputs: {
-        pl: document.getElementById("plInput")?.value || "",
-        res: document.getElementById("resInput")?.value || "",
-        bulk: document.getElementById("bulkInput")?.value || ""
-      },
-      state: {
-        qtyById: mapToObj(window.STATE?.qtyById),
-        batchesByPanel: window.STATE?.batchesByPanel || {p1:[],p2:[],p3:[]},
-        selectedBatchIdByPanel: window.STATE?.selectedBatchIdByPanel || {p1:null,p2:null,p3:null},
-        activePanel: window.STATE?.activePanel || "p1",
-        activeSubByPanel: window.STATE?.activeSubByPanel || {p1:"p1-report",p2:"p2-report",p3:"p3-report"}
-      }
-    };
-  }
-
-  function saveNow(){
-    try{
-      const snap=getSnapshot();
-      localStorage.setItem(KEY, JSON.stringify(snap));
-    }catch(e){
-      console.warn("Persistencia: no se pudo guardar", e);
-    }
-  }
-
-  function restore(){
-    const raw = localStorage.getItem(KEY);
-    if(!raw) return;
-    const snap = safeParse(raw, null);
-    if(!snap || !snap.inputs) return;
-
-    // 1) restaurar inputs
-    const plEl=document.getElementById("plInput");
-    const resEl=document.getElementById("resInput");
-    const bulkEl=document.getElementById("bulkInput");
-    if(plEl) plEl.value = snap.inputs.pl || "";
-    if(resEl) resEl.value = snap.inputs.res || "";
-    if(bulkEl) bulkEl.value = snap.inputs.bulk || "";
-
-    // 2) si hay data, recalcular reporte (esto recrea moves / paneles)
-    const hasAny = (plEl?.value.trim() || resEl?.value.trim() || bulkEl?.value.trim());
-    if(hasAny && typeof window.process === "function"){
-      try{ window.process(); }catch(e){ console.warn("Persistencia: process() falló", e); }
-    }
-
-    // 3) restaurar estado operativo y refrescar
-    if(snap.state && window.STATE){
-      window.STATE.qtyById = objToMap(snap.state.qtyById);
-      window.STATE.batchesByPanel = snap.state.batchesByPanel || {p1:[],p2:[],p3:[]};
-      window.STATE.selectedBatchIdByPanel = snap.state.selectedBatchIdByPanel || {p1:null,p2:null,p3:null};
-      window.STATE.activePanel = snap.state.activePanel || "p1";
-      window.STATE.activeSubByPanel = snap.state.activeSubByPanel || {p1:"p1-report",p2:"p2-report",p3:"p3-report"};
-      if(typeof window.refreshAllTables === "function") window.refreshAllTables();
-      if(typeof window.setActivePanel === "function") window.setActivePanel(window.STATE.activePanel || "p1");
-      if(typeof window.setActiveSub === "function"){
-        const p=window.STATE.activePanel || "p1";
-        const sub=(window.STATE.activeSubByPanel && window.STATE.activeSubByPanel[p]) ? window.STATE.activeSubByPanel[p] : (p+"-report");
-        window.setActiveSub(p, sub);
-      }
-    }
-  }
-
-  // Debounce save
+function debounce(fn, wait){
   let t=null;
-  function scheduleSave(){
+  return (...args)=>{
     clearTimeout(t);
-    t=setTimeout(saveNow, 350);
-  }
+    t=setTimeout(()=>fn(...args), wait);
+  };
+}
 
-  // Hook inputs
-  ["plInput","resInput","bulkInput"].forEach(id=>{
-    const el=document.getElementById(id);
-    if(el) el.addEventListener("input", scheduleSave);
-  });
-
-  // Hook qty inputs (delegado)
-  document.addEventListener("input",(ev)=>{
-    const el=ev.target;
-    if(el && el.matches && el.matches('input[data-role="qty"]')) scheduleSave();
-  });
-
-  // Hook acciones que cambian lotes/pestañas
-  ["process","p1CopyPending","p2CopyPending","p3CopyPending","p1BatchSelect","p2BatchSelect","p3BatchSelect",
-   "p1CopyBatch","p2CopyBatch","p3CopyBatch","downloadDay","printDay"].forEach(id=>{
-    const el=document.getElementById(id);
-    if(!el) return;
-    el.addEventListener("click", ()=>setTimeout(saveNow, 120));
-    el.addEventListener("change", ()=>setTimeout(saveNow, 120));
-  });
-
-  // Limpiar hoja: borrar inputs + borrar persistencia + reset visual
-  const clearBtn=document.getElementById("clearAll");
-  if(clearBtn){
-    clearBtn.addEventListener("click", ()=>{
-      // el original ya pregunta confirm, así que esperamos un tick y verificamos si quedó vacío
-      setTimeout(()=>{
-        const pl=document.getElementById("plInput")?.value || "";
-        const res=document.getElementById("resInput")?.value || "";
-        const bulk=document.getElementById("bulkInput")?.value || "";
-        const allEmpty = !(pl.trim() || res.trim() || bulk.trim());
-        if(allEmpty){
-          try{ localStorage.removeItem(KEY); }catch(e){}
-          // reset estado
-          if(window.STATE){
-            window.STATE.p1=[]; window.STATE.p2=[]; window.STATE.p3=[];
-            window.STATE.qtyById=new Map();
-            window.STATE.batchesByPanel={p1:[],p2:[],p3:[]};
-            window.STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
-            window.STATE.moveById=new Map();
-            if(typeof window.refreshAllTables === "function") window.refreshAllTables();
-            if(typeof window.setActivePanel === "function") window.setActivePanel("p1");
-            if(typeof window.setActiveSub === "function") window.setActiveSub("p1","p1-report");
-          }
-        }
-      }, 30);
-    }, {capture:false});
-  }
-
-  // Restore al abrir
-  window.addEventListener("load", restore);
-})();
-</script>
-
-
-<script>
-/* ===== Persistencia LOCAL (por PC) =====
-   Objetivo: al recargar NO se pierde nada.
-   Solo se borra al presionar "Limpiar" (botón existente) o si llamas window.limpiarHoja().
-*/
-(function(){
-  const KEY = "reportePL_local_state_v3";
-
-  function setSyncBadge(msg, ok=true){
-    const el=document.getElementById("syncBadge");
-    if(!el) return;
-    el.textContent = msg;
-    el.style.background = ok ? "#d1e7dd" : "#f8d7da";
-    el.style.borderColor = ok ? "#badbcc" : "#f5c2c7";
-    el.style.color = ok ? "#0f5132" : "#842029";
-  }
-
-  function snapshotToObjMap(m){
-    const obj={};
-    if(!m || typeof m.entries!=="function") return obj;
-    for(const [k,v] of m.entries()) obj[k]=v;
-    return obj;
-  }
-  function objToMap(o){
-    const m=new Map();
-    if(!o || typeof o!=="object") return m;
-    for(const k of Object.keys(o)){
-      const n=parseInt(o[k],10);
-      if(Number.isFinite(n) && n>0) m.set(k,n);
-    }
-    return m;
-  }
-
-  function safeGet(id){ return document.getElementById(id); }
-
-  function capture(){
-    const pl = safeGet("plInput")?.value || "";
-    const res = safeGet("resInput")?.value || "";
-    const bulk = safeGet("bulkInput")?.value || "";
-
-    return {
-      v: 3,
-      savedAt: Date.now(),
-      texts: { pl, res, bulk },
-      ui: {
-        activePanel: (window.STATE && STATE.activePanel) ? STATE.activePanel : "p1",
-        activeSubByPanel: (window.STATE && STATE.activeSubByPanel) ? STATE.activeSubByPanel : {p1:"p1-report",p2:"p2-report",p3:"p3-report"}
-      },
-      state: {
-        qtyById: (window.STATE && STATE.qtyById) ? snapshotToObjMap(STATE.qtyById) : {},
-        batchesByPanel: (window.STATE && STATE.batchesByPanel) ? STATE.batchesByPanel : {p1:[],p2:[],p3:[]},
-        selectedBatchIdByPanel: (window.STATE && STATE.selectedBatchIdByPanel) ? STATE.selectedBatchIdByPanel : {p1:null,p2:null,p3:null}
-      }
-    };
-  }
-
-  function restore(payload){
-    if(!payload || !payload.texts) return false;
-
-    const {pl,res,bulk} = payload.texts;
-
-    if(safeGet("plInput")) safeGet("plInput").value = pl || "";
-    if(safeGet("resInput")) safeGet("resInput").value = res || "";
-    if(safeGet("bulkInput")) safeGet("bulkInput").value = bulk || "";
-
-    const hasAny = ((pl||"").trim() || (res||"").trim() || (bulk||"").trim());
-    if(hasAny && typeof window.process === "function"){
-      try{ window.process(); }catch(e){}
-    }
-
-    if(window.STATE){
-      STATE.qtyById = objToMap(payload.state?.qtyById || {});
-      if(payload.state?.batchesByPanel) STATE.batchesByPanel = payload.state.batchesByPanel;
-      if(payload.state?.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = payload.state.selectedBatchIdByPanel;
-      if(payload.ui?.activeSubByPanel) STATE.activeSubByPanel = payload.ui.activeSubByPanel;
-
-      if(typeof window.refreshAllTables==="function") window.refreshAllTables();
-
-      const p = payload.ui?.activePanel || "p1";
-      if(typeof window.setActivePanel==="function") window.setActivePanel(p);
-      if(typeof window.setActiveSub==="function"){
-        const sub = (STATE.activeSubByPanel && STATE.activeSubByPanel[p]) ? STATE.activeSubByPanel[p] : (p+"-report");
-        window.setActiveSub(p, sub);
-      }
-    }
-
-    return true;
-  }
-
-  let saveTimer = null;
-  function scheduleSave(){
-    setSyncBadge("Sync: guardando…");
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(()=>{
-      try{
-        const payload = capture();
-        localStorage.setItem(KEY, JSON.stringify(payload));
-        setSyncBadge("Sync: OK (guardado)");
-      }catch(e){
-        console.warn("Persistencia local falló:", e);
-        setSyncBadge("Sync: ERROR (localStorage)", false);
-      }
-    }, 350);
-  }
-
-  window.limpiarHoja = function(){
-    const ok = confirm("¿Seguro que deseas LIMPIAR LA HOJA? Esto borrará todo en esta PC.");
-    if(!ok) return;
-
-    try{ localStorage.removeItem(KEY); }catch(e){}
-    try{
-      if(safeGet("plInput")) safeGet("plInput").value="";
-      if(safeGet("resInput")) safeGet("resInput").value="";
-      if(safeGet("bulkInput")) safeGet("bulkInput").value="";
-      if(window.STATE){
-        STATE.p1=[]; STATE.p2=[]; STATE.p3=[];
-        STATE.qtyById=new Map();
-        STATE.batchesByPanel={p1:[],p2:[],p3:[]};
-        STATE.selectedBatchIdByPanel={p1:null,p2:null,p3:null};
-        STATE.moveById=new Map();
-        if(typeof window.refreshAllTables==="function") window.refreshAllTables();
-        if(typeof window.setActivePanel==="function") window.setActivePanel("p1");
-        if(typeof window.setActiveSub==="function") window.setActiveSub("p1","p1-report");
-      }
-    }catch(e){}
-    setSyncBadge("Sync: limpiado");
+function serializeState(){
+  // Nota: Maps no se serializan directo, se convierten a arrays
+  const safe = {};
+  safe.ts = Date.now();
+  safe.inputs = {
+    pl: document.getElementById("plInput")?.value ?? "",
+    res: document.getElementById("resInput")?.value ?? "",
+    bulk: document.getElementById("bulkInput")?.value ?? ""
   };
 
-  // Hook al botón Limpiar (cualquier id)
-  const btnClear = document.getElementById("clearAll") || document.getElementById("clear") || document.querySelector("button#clearAll");
-  const btnByText = [...document.querySelectorAll("button")].find(b => (b.textContent||"").trim().toLowerCase()==="limpiar" || (b.textContent||"").toLowerCase().includes("limpiar hoja"));
-  const limpiarBtn = btnClear || btnByText;
-  if(limpiarBtn){
-    limpiarBtn.addEventListener("click",(e)=>{
-      e.preventDefault(); e.stopPropagation();
-      window.limpiarHoja();
-    }, true);
-  }
-
-  ["plInput","resInput","bulkInput"].forEach(id=>{
-    const el=safeGet(id);
-    if(el) el.addEventListener("input", scheduleSave);
-  });
-
-  document.addEventListener("input",(ev)=>{
-    const el=ev.target;
-    if(el && el.matches && el.matches('input[data-role="qty"]')) scheduleSave();
-  });
-
-  ["process","p1CopyPending","p2CopyPending","p3CopyPending","p1BatchSelect","p2BatchSelect","p3BatchSelect"].forEach(id=>{
-    const el=safeGet(id);
-    if(!el) return;
-    el.addEventListener("click", ()=>setTimeout(scheduleSave, 80));
-    el.addEventListener("change", ()=>setTimeout(scheduleSave, 80));
-  });
-
   try{
-    const raw = localStorage.getItem(KEY);
-    if(raw){
-      const payload = JSON.parse(raw);
-      const ok = restore(payload);
-      if(ok){
-        const t = payload.savedAt ? new Date(payload.savedAt) : null;
-        const stamp = t ? t.toLocaleString() : "";
-        setSyncBadge("Sync: OK (restaurado) " + stamp);
-      }else{
-        setSyncBadge("Sync: listo");
-      }
-    }else{
-      setSyncBadge("Sync: listo");
-    }
+    safe.state = {
+      activePanel: STATE.activePanel,
+      activeSubByPanel: STATE.activeSubByPanel,
+      selectedBatchIdByPanel: STATE.selectedBatchIdByPanel,
+      qtyById: Array.from(STATE.qtyById?.entries?.() ?? []),
+      batchesByPanel: STATE.batchesByPanel ?? {p1:[],p2:[],p3:[]}
+    };
   }catch(e){
-    console.warn("No se pudo restaurar:", e);
-    setSyncBadge("Sync: ERROR (restaurar)", false);
+    safe.state = null;
   }
-})();
-</script>
+  return safe;
+}
 
+function applySaved(saved){
+  if(!saved) return;
+
+  // Restaura inputs (fuente)
+  const plEl = document.getElementById("plInput");
+  const resEl = document.getElementById("resInput");
+  const bulkEl = document.getElementById("bulkInput");
+  if(plEl) plEl.value = saved.inputs?.pl ?? "";
+  if(resEl) resEl.value = saved.inputs?.res ?? "";
+  if(bulkEl) bulkEl.value = saved.inputs?.bulk ?? "";
+
+  // Si hay data, re-procesa para reconstruir el reporte
+  const hasAny = (plEl?.value||"").trim() || (resEl?.value||"").trim() || (bulkEl?.value||"").trim();
+  if(hasAny){
+    try{
+      if(typeof process==="function") process();
+    }catch(e){}
+  }
+
+  // Restaura estado operacional (QTY / lotes / tabs)
+  try{
+    const st = saved.state;
+    if(st){
+      if(st.qtyById) STATE.qtyById = new Map(st.qtyById);
+      if(st.batchesByPanel) STATE.batchesByPanel = st.batchesByPanel;
+      if(st.selectedBatchIdByPanel) STATE.selectedBatchIdByPanel = st.selectedBatchIdByPanel;
+      if(st.activeSubByPanel) STATE.activeSubByPanel = st.activeSubByPanel;
+      if(st.activePanel) STATE.activePanel = st.activePanel;
+    }
+
+    // Re-render de UI si existen funciones
+    if(typeof renderAll==="function") renderAll();
+    if(typeof setActivePanel==="function") setActivePanel(STATE.activePanel || "p1");
+    if(typeof setActiveSub==="function"){
+      ["p1","p2","p3"].forEach(p=>{
+        const sub = (STATE.activeSubByPanel && STATE.activeSubByPanel[p]) ? STATE.activeSubByPanel[p] : "report";
+        setActiveSub(p, sub);
+      });
+    }
+    if(typeof renderSelectedBatch==="function"){
+      ["p1","p2","p3"].forEach(p=>renderSelectedBatch(p));
+    }
+  }catch(e){}
+}
+
+function saveNow(){
+  try{
+    const payload = serializeState();
+    const json = JSON.stringify(payload);
+    localStorage.setItem(STORAGE_KEY, json);
+    setSync("Sync: OK (guardado)", "ok");
+  }catch(e){
+    console.error("Persistencia: error guardando", e);
+    setSync("Sync: ERROR (ver consola)", "err");
+  }
+}
+const saveSoon = debounce(saveNow, 450);
+
+// Guarda cuando cambias los 3 inputs
+["plInput","resInput","bulkInput"].forEach(id=>{
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.addEventListener("input", ()=>{
+    setSync("Sync: editando…", "warn");
+    saveSoon();
+  });
+});
+
+// Guarda cuando cambias QTY (inputs generados dinámicamente)
+document.addEventListener("input", (e)=>{
+  const t = e.target;
+  if(t && t.getAttribute && t.getAttribute("data-role")==="qty"){
+    setSync("Sync: editando…", "warn");
+    saveSoon();
+  }
+});
+
+// Guarda en cambios típicos (lotes, selects)
+document.addEventListener("change", (e)=>{
+  const t = e.target;
+  if(!t) return;
+  // Solo algunos elementos (select de lote, etc.)
+  if(t.id && (t.id.includes("BatchSelect") || t.id.includes("batchSelect"))){
+    setSync("Sync: editando…", "warn");
+    saveSoon();
+  }
+});
+
+
+// Al procesar, guarda (sin tocar tu función original)
+try{
+  const btn = document.getElementById("process");
+  if(btn) btn.addEventListener("click", ()=> setTimeout(()=>{ setSync("Sync: OK (guardado)","ok"); saveNow(); }, 0));
+}catch(e){}
+
+// Hook: después de copiar / crear lote, guarda (si existen handlers globales)
+["handleCopyPending","handleCopyBatch","createBatchFromPending"].forEach(fn=>{
+  try{
+    if(typeof window[fn] === "function"){
+      const orig = window[fn];
+      window[fn] = function(){
+        const r = orig.apply(this, arguments);
+        setTimeout(()=>{ setSync("Sync: OK (guardado)","ok"); saveNow(); }, 0);
+        return r;
+      };
+    }
+  }catch(e){}
+});
+
+// Restore al cargar
+window.addEventListener("DOMContentLoaded", ()=>{
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw){
+      setSync("Sync: listo", "ok");
+      return;
+    }
+    const saved = JSON.parse(raw);
+    applySaved(saved);
+    setSync("Sync: restaurado ✅", "ok");
+  }catch(e){
+    console.error("Persistencia: error restaurando", e);
+    setSync("Sync: ERROR (ver consola)", "err");
+  }
+});
+
+</script>
 </body>
 </html>
